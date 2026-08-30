@@ -44,10 +44,12 @@ I dev-hosten: öppna en `.sql`-fil, skapa en launch-konfiguration av typen
 ## Status / roadmap
 
 - [x] DAP-skelett: launch, breakpoints, continue/step, locals, SSE-events
-- [x] ScriptDom-instrumentering av topp-nivå-statements
+- [x] ScriptDom-instrumentering, rekursivt ner i `BEGIN/END`, `IF`/`ELSE`,
+      `WHILE` och `TRY/CATCH` (grenar utan `BEGIN/END` wrappas i syntetiska block)
 - [x] `__dbg`-schema med pause/control-mekanism
-- [ ] Verklig radmappning i paused-events (stack med korrekt source)
-- [ ] Locals: TABLE-variabler som expanderbart träd (variablesReference)
+- [x] Verklig source-mappning i paused-events (rad/kolumn + slutposition,
+      exakt statement highlightas i editorn)
+- [x] Locals: TABLE-variabler som expanderbart träd (variablesReference)
 - [ ] Step-into i stored procedures (inline-expansion, virtuella source-filer)
 - [ ] Invoke-läge med parameterpanel
 - [ ] Conditional breakpoints
@@ -56,9 +58,11 @@ I dev-hosten: öppna en `.sql`-fil, skapa en launch-konfiguration av typen
 
 ## Kända begränsningar just nu
 
-- Instrumenteringen är per topp-nivå-statement; statements inne i
-  `IF`/`WHILE`-block pausas inte ännu (kräver rekursiv besökare).
 - `GO`-batchseparatorer hanteras av parsern men körs som en batch.
+- Modul-definitioner (`CREATE PROCEDURE`/`VIEW`/`TRIGGER`) instrumenteras
+  inte - de måste stå ensamma i sin batch. Kör dem, men det går inte att
+  pausa på dem, och eftersom batcher slås ihop kan ett script som blandar
+  moduldefinitioner med andra statements fortfarande faila.
 - Locals-captures körs före `__dbg.Pause` – variabler visar värdet
   *efter* att statementet körts.
 
