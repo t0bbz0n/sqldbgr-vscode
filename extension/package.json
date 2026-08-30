@@ -1,0 +1,77 @@
+{
+  "name": "tsql-debugger",
+  "displayName": "T-SQL Debugger",
+  "description": "Breakpoint debugging for T-SQL scripts and stored procedures in SQL Server.",
+  "version": "0.0.1",
+  "publisher": "your-publisher-id",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Debuggers"],
+  "activationEvents": ["onDebugResolve:tsql"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "breakpoints": [{ "language": "sql" }],
+    "debuggers": [
+      {
+        "type": "tsql",
+        "label": "T-SQL Debugger",
+        "languages": ["sql"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program", "connectionString"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Sökväg till .sql-filen som ska debuggas.",
+                "default": "${file}"
+              },
+              "connectionString": {
+                "type": "string",
+                "description": "SQL Server connection string."
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["invoke", "attach"],
+                "default": "invoke",
+                "description": "invoke = kör själv, attach = vänta på markerad trafik (kräver licens mot remote)."
+              },
+              "params": {
+                "type": "object",
+                "description": "Parametervärden vid invoke av stored procedure.",
+                "default": {}
+              },
+              "sidecarUrl": {
+                "type": "string",
+                "default": "http://localhost:5199",
+                "description": "URL till sidecar-tjänsten."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "tsql",
+            "request": "launch",
+            "name": "Debug T-SQL (lokal)",
+            "program": "${file}",
+            "connectionString": "Server=(localdb)\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true",
+            "mode": "invoke"
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@vscode/debugadapter": "^1.65.0",
+    "@vscode/debugprotocol": "^1.65.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

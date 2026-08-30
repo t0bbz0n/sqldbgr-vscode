@@ -1,0 +1,66 @@
+-- tsql-debugger runtime-schema. Skapas idempotent per databas.
+-- Allt här körs i användarens egen databas och är öppen källkod (se NOTICE.md).
+
+IF SCHEMA_ID(N'__dbg') IS NULL
+    EXEC(N'CREATE SCHEMA __dbg');
+GO
+
+IF OBJECT_ID(N'__dbg.Control') IS NULL
+CREATE TABLE __dbg.Control (
+    SessionId         UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    ActiveBreakpoints NVARCHAR(MAX)    NULL,          -- JSON-array av stmt_id
+    Command           NVARCHAR(20)     NOT NULL DEFAULT 'entry', -- continue|stepOver|stepIn|entry
+    Signaled          BIT              NOT NULL DEFAULT 0,
+    PausedAtStmt      INT              NULL,          -- NULL = kör, annars pausad vid stmt
+    LastHeartbeatUtc  DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME()
+);
+GO
+
+IF OBJECT_ID(N'__dbg.Locals') IS NULL
+CREATE TABLE __dbg.Locals (
+    SessionId UNIQUEIDENTIFIER NOT NULL,
+    Name      NVARCHAR(128)    NOT NULL,
+    TypeName  NVARCHAR(128)    NOT NULL,
+    Value     NVARCHAR(MAX)    NULL,
+    INDEX IX_Locals_Session (SessionId)
+);
+GO
+
+CREATE OR ALTER PROCEDURE __dbg.Pause
+    @stmt_id INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @sid UNIQUEIDENTIFIER =
+        CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'));
+    IF @sid IS NULL RETURN;  -- ej debug-markerad session: kör obehindrat
+
+    DECLARE @cmd NVARCHAR(20), @bp NVARCHAR(MAX);
+    SELECT @cmd = Command, @bp = ActiveBreakpoints
+    FROM __dbg.Control WHERE SessionId = @sid;
+
+    IF @cmd IS NULL RETURN;  -- ingen kontrollrad: kör obehindrat
+
+    -- 'continue': pausa bara vid breakpoint. 'stepOver'/'stepIn'/'entry': pausa alltid.
+    IF @cmd = 'continue'
+       AND (@bp IS NULL OR NOT EXISTS (
+            SELECT 1 FROM OPENJSON(@bp) WHERE value = @stmt_id))
+        RETURN;
+
+    -- Markera pausad och vänta på signal från klienten
+    UPDATE __dbg.Control SET PausedAtStmt = @stmt_id, Signaled = 0
+    WHERE SessionId = @sid;
+
+    DECLARE @signaled BIT = 0;
+    WHILE @signaled = 0
+    BEGIN
+        WAITFOR DELAY '00:00:00.050';
+        SELECT @signaled = Signaled FROM __dbg.Control WHERE SessionId = @sid;
+        IF @signaled IS NULL RETURN; -- sessionen städad utifrån: släpp igenom
+    END
+
+    UPDATE __dbg.Control SET Signaled = 0, PausedAtStmt = NULL
+    WHERE SessionId = @sid;
+END
+GO
