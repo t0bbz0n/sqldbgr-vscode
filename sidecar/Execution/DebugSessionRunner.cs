@@ -117,12 +117,23 @@ public class DebugSessionRunner
             if (state.PausedAtStmt is int stmt && stmt != lastPausedStmt)
             {
                 lastPausedStmt = stmt;
-                var line = _script.StmtToLine.GetValueOrDefault(stmt, 1);
+                var span = _script.StmtToSpan.GetValueOrDefault(stmt);
                 var reason = state.Command is "stepOver" or "stepIn" ? "step" : "breakpoint";
                 await EmitAsync("paused", JsonSerializer.Serialize(new
                 {
                     reason,
-                    stack = new[] { new { frameName = "batch", line, sourcePath = (string?)null } }
+                    stack = new[]
+                    {
+                        new
+                        {
+                            frameName = Path.GetFileName(_script.SourcePath),
+                            sourcePath = (string?)_script.SourcePath,
+                            line = span?.Line ?? 1,
+                            column = span?.Column ?? 1,
+                            endLine = span?.EndLine,
+                            endColumn = span?.EndColumn
+                        }
+                    }
                 }));
             }
             else if (state.PausedAtStmt is null)
