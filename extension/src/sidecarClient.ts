@@ -20,9 +20,18 @@ export interface LocalVar {
   value: string | null;
 }
 
+export interface StackFrameInfo {
+  frameName: string;
+  sourcePath: string | null;
+  line: number;
+  column: number;
+  endLine: number | null;
+  endColumn: number | null;
+}
+
 export interface PausedEvent {
   reason: 'breakpoint' | 'step' | 'entry';
-  stack: Array<{ frameName: string; line: number; sourcePath: string | null }>;
+  stack: StackFrameInfo[];
 }
 
 /**
