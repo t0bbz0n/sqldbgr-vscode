@@ -26,7 +26,9 @@ jobs:
       - name: Build sidecar
         run: dotnet build sidecar -c Release
 
-      # prepack kör dotnet publish till dist/, så tarballen är komplett
+      # Valideras på varje push men laddas bara upp vid release (taggar) -
+      # sidecaren buntas numera i VSIX:en, så tarballen behövs bara för
+      # npm-publicering/fristående körning. prepack kör dotnet publish.
       - name: Pack sidecar npm package
         working-directory: sidecar-npm
         run: npm pack
@@ -51,13 +53,6 @@ jobs:
         with:
           name: tsql-debugger-vsix
           path: extension/*.vsix
-          if-no-files-found: error
-
-      - name: Upload sidecar npm package
-        uses: actions/upload-artifact@v4
-        with:
-          name: tsql-debugger-sidecar-npm
-          path: sidecar-npm/*.tgz
           if-no-files-found: error
 
       - name: Create GitHub release
