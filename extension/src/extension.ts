@@ -29,9 +29,21 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
+        // connectionString: launch-konfig -> settings -> fråga användaren
         if (!config.connectionString) {
-          vscode.window.showErrorMessage('tsql-debugger: connectionString saknas i launch-konfigurationen.');
-          return undefined;
+          config.connectionString = vscode.workspace
+            .getConfiguration('tsql-debugger').get<string>('connectionString') || undefined;
+        }
+        if (!config.connectionString) {
+          const entered = await vscode.window.showInputBox({
+            title: 'T-SQL Debugger: connection string',
+            prompt: 'SQL Server-anslutningssträng för debug-sessionen',
+            value: 'Server=(localdb)\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true',
+            ignoreFocusOut: true
+          });
+          if (!entered) return undefined; // avbrutet - starta inte sessionen
+          config.connectionString = entered;
+          offerToSaveConnectionString(entered);
         }
 
         if (config.autoStartSidecar !== false) {
@@ -53,6 +65,21 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+}
+
+// Fire-and-forget så launchen inte blockeras av frågan.
+function offerToSaveConnectionString(connectionString: string): void {
+  void vscode.window.showInformationMessage(
+    'Spara anslutningssträngen så du slipper frågan nästa gång?',
+    'Spara i workspace', 'Spara globalt'
+  ).then(choice => {
+    if (!choice) return;
+    const target = choice === 'Spara globalt'
+      ? vscode.ConfigurationTarget.Global
+      : vscode.ConfigurationTarget.Workspace;
+    void vscode.workspace.getConfiguration('tsql-debugger')
+      .update('connectionString', connectionString, target);
+  });
 }
 
 export function deactivate() {}

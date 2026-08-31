@@ -33,8 +33,12 @@ npm run compile
 # Öppna extension/ i VS Code, F5 -> Extension Development Host
 ```
 
-I dev-hosten: öppna en `.sql`-fil, skapa en launch-konfiguration av typen
-`tsql` (snippet finns), sätt breakpoints, F5.
+I dev-hosten: öppna en `.sql`-fil, sätt breakpoints, F5. Ingen launch.json
+behövs - saknas `connectionString` hämtas den från settingen
+`tsql-debugger.connectionString`, och finns inte den heller frågar
+extensionen efter en vid start (med erbjudande att spara i settings).
+Vill man styra mer skapar man en launch-konfiguration av typen `tsql`
+(snippet finns).
 
 ### Sidecaren startar automatiskt
 

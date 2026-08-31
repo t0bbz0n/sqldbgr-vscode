@@ -10,6 +10,17 @@
   "main": "./out/extension.js",
   "extensionDependencies": ["ms-dotnettools.vscode-dotnet-runtime"],
   "contributes": {
+    "configuration": {
+      "title": "T-SQL Debugger",
+      "properties": {
+        "tsql-debugger.connectionString": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "SQL Server connection string som används när launch-konfigurationen saknar `connectionString`. Lämna tom för att bli tillfrågad vid start."
+        }
+      }
+    },
     "breakpoints": [{ "language": "sql" }],
     "debuggers": [
       {
