@@ -1,0 +1,20 @@
+{
+  "name": "tsql-debugger-sidecar",
+  "version": "0.0.1",
+  "description": "Sidecar service for the tsql-debugger VS Code extension. Runnable via npx; requires the .NET 8 runtime.",
+  "license": "MIT",
+  "bin": {
+    "tsql-debugger-sidecar": "bin/tsql-debugger-sidecar.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "dotnet publish ../sidecar -c Release -o dist",
+    "prepack": "npm run build"
+  }
+}

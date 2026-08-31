@@ -27,11 +27,6 @@ VS Code (extension, TS)  ──DAP──►  debugAdapter.ts
 Förutsättningar: .NET 8 SDK, Node 20+, en lokal SQL Server ((localdb) räcker).
 
 ```bash
-# Sidecar
-cd sidecar
-dotnet run            # lyssnar på http://localhost:5199
-
-# Extension
 cd extension
 npm install
 npm run compile
@@ -40,6 +35,31 @@ npm run compile
 
 I dev-hosten: öppna en `.sql`-fil, skapa en launch-konfiguration av typen
 `tsql` (snippet finns), sätt breakpoints, F5.
+
+### Sidecaren startar automatiskt
+
+Ingen backend behöver startas för hand: vid F5 probar extensionen
+`sidecarUrl` (`/health`) och startar annars sidecaren själv via
+`npx -y tsql-debugger-sidecar` (npm-paketet i `sidecar-npm/`, kräver
+.NET 8-runtime). Processen ägs av extensionen och städas undan när den
+avaktiveras; en sidecar man startat själv rörs aldrig. Loggarna hamnar i
+output-kanalen **T-SQL Debugger Sidecar**.
+
+Under utveckling (opublicerat paket / lokala ändringar) pekar man om
+startkommandot i launch-konfigurationen:
+
+```jsonc
+{
+  "type": "tsql",
+  // ...
+  "sidecarCommand": ["dotnet", "run", "--project", "${workspaceFolder}/sidecar", "--"],
+  // eller stäng av helt och kör `dotnet run` själv:
+  "autoStartSidecar": false
+}
+```
+
+Publicering av sidecar-paketet: `cd sidecar-npm && npm publish`
+(prepack kör `dotnet publish` till `dist/`).
 
 ## Status / roadmap
 

@@ -43,6 +43,16 @@
                 "type": "string",
                 "default": "http://localhost:5199",
                 "description": "URL till sidecar-tjänsten."
+              },
+              "autoStartSidecar": {
+                "type": "boolean",
+                "default": true,
+                "description": "Starta sidecaren automatiskt (via npx) om ingen redan svarar på sidecarUrl."
+              },
+              "sidecarCommand": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Kommando som startar sidecaren; --port läggs på automatiskt. Default: [\"npx\", \"-y\", \"tsql-debugger-sidecar\"]. Under utveckling: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"]."
               }
             }
           }

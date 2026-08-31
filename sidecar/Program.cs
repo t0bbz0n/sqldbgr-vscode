@@ -2,11 +2,19 @@ using System.Collections.Concurrent;
 using SqlDebugger.Sidecar.Execution;
 using SqlDebugger.Sidecar.Parsing;
 
+var port = 5199;
+for (var i = 0; i < args.Length - 1; i++)
+    if (args[i] == "--port" && int.TryParse(args[i + 1], out var parsed))
+        port = parsed;
+
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://localhost:5199");
+builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 var app = builder.Build();
 
 var sessions = new ConcurrentDictionary<Guid, DebugSessionRunner>();
+
+// Extensionen probar denna för att avgöra om sidecaren redan kör.
+app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "tsql-debugger-sidecar" }));
 
 app.MapPost("/session/start", async (StartSessionRequest req) =>
 {
