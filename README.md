@@ -63,7 +63,11 @@ Publicering av sidecar-paketet: `cd sidecar-npm && npm publish`
 
 ## Installera i VS Code
 
-För att installera extensionen på riktigt (utanför dev-hosten):
+CI (`.github/workflows/build.yml`) bygger VSIX:en och sidecar-npm-tarballen
+på varje push - ladda ner dem under **Actions → körningen → Artifacts**.
+Taggas en `v*`-tagg skapas en GitHub-release med båda filerna bifogade.
+
+För att bygga och installera lokalt:
 
 ```bash
 cd extension
