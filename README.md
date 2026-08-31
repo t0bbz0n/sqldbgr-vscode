@@ -61,6 +61,29 @@ startkommandot i launch-konfigurationen:
 Publicering av sidecar-paketet: `cd sidecar-npm && npm publish`
 (prepack kör `dotnet publish` till `dist/`).
 
+## Installera i VS Code
+
+För att installera extensionen på riktigt (utanför dev-hosten):
+
+```bash
+cd extension
+npm install
+npm run compile
+npx @vscode/vsce package                            # -> tsql-debugger-0.0.1.vsix
+code --install-extension tsql-debugger-0.0.1.vsix
+```
+
+(eller Extensions-panelen → `⋯` → *Install from VSIX…*)
+
+OBS: autostarten kör `npx -y tsql-debugger-sidecar`, så tills det paketet
+är publicerat på npm måste en installerad extension antingen peka om
+`sidecarCommand` mot `dotnet run --project .../sidecar --` eller köra med
+en manuellt startad sidecar.
+
+För Marketplace-publicering: skapa en publisher på
+marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
+(står som `your-publisher-id`), och kör `npx @vscode/vsce publish`.
+
 ## Status / roadmap
 
 - [x] DAP-skelett: launch, breakpoints, continue/step, locals, SSE-events
