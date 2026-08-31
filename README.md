@@ -125,11 +125,10 @@ marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 
 ## Kända begränsningar just nu
 
-- `GO`-batchseparatorer hanteras av parsern men körs som en batch.
-- Modul-definitioner (`CREATE PROCEDURE`/`VIEW`/`TRIGGER`) instrumenteras
-  inte - de måste stå ensamma i sin batch. Kör dem, men det går inte att
-  pausa på dem, och eftersom batcher slås ihop kan ett script som blandar
-  moduldefinitioner med andra statements fortfarande faila.
+- Modul-definitioner (`CREATE PROCEDURE`/`FUNCTION`/`VIEW`/`TRIGGER`)
+  körs men instrumenteras inte - det går inte att pausa inne i dem.
+  Att debugga *anropet* av en proc är roadmap (step-into/invoke-läge);
+  scalar-funktioner kan aldrig pausas (UDF:er tillåter inga sidoeffekter).
 - Locals-captures körs före `__dbg.Pause` – variabler visar värdet
   *efter* att statementet körts.
 

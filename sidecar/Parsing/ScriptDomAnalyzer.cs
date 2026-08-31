@@ -5,7 +5,9 @@ namespace SqlDebugger.Sidecar.Parsing;
 
 public class InstrumentedScript
 {
-    public required string Sql { get; init; }
+    /// <summary>Instrumenterade batchar (GO-separerade i källan), i körordning.
+    /// Körs var för sig - CREATE FUNCTION/PROC m.fl. kräver egen batch.</summary>
+    public required IReadOnlyList<string> Batches { get; init; }
     /// <summary>Originalfilen som instrumenterades; följer med i paused-events.</summary>
     public required string SourcePath { get; init; }
     /// <summary>Rad (1-baserad) i originalfilen -> statementId.</summary>
@@ -37,25 +39,30 @@ public class ScriptDomAnalyzer
             return Empty(sourcePath, ["Kunde inte tolka innehållet som ett T-SQL-script."]);
 
         var ctx = new Context();
-        var sb = new StringBuilder();
-
-        // Sätts av runnern per session; SESSION_CONTEXT bär sessionId genom batchen.
-        sb.AppendLine("-- Instrumenterad av tsql-debugger. Deployas ALDRIG permanent.");
+        var batches = new List<string>();
 
         foreach (var batch in script.Batches)
         {
+            // Variabler lever inte över batchgränser - scopet börjar om per batch.
+            ctx.Declared.Clear();
+
             // Injektioner sprängs in i batchens originaltext (istället för att
             // statements skrivs ut platt) så att BEGIN/END-, IF/ELSE- och
             // WHILE-strukturer bevaras och pauser hamnar inuti blocken.
             var injections = new List<Injection>();
             foreach (var stmt in batch.Statements)
                 InstrumentStatement(stmt, injections, ctx);
-            sb.AppendLine(Splice(sql, batch, injections));
+
+            var text = Splice(sql, batch, injections);
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            // SESSION_CONTEXT (satt av runnern) bär sessionId genom alla batchar.
+            batches.Add("-- Instrumenterad av tsql-debugger. Deployas ALDRIG permanent.\n" + text);
         }
 
         return new InstrumentedScript
         {
-            Sql = sb.ToString(),
+            Batches = batches,
             SourcePath = sourcePath,
             LineMap = ctx.LineMap,
             StmtToSpan = ctx.StmtToSpan,
@@ -221,7 +228,7 @@ public class ScriptDomAnalyzer
 
     private static InstrumentedScript Empty(string sourcePath, List<string> errors) => new()
     {
-        Sql = string.Empty,
+        Batches = [],
         SourcePath = sourcePath,
         LineMap = [],
         StmtToSpan = [],

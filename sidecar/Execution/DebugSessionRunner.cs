@@ -48,10 +48,13 @@ public class DebugSessionRunner
             // Övervakningsloop på separat connection: upptäcker paus och pushar events
             _ = MonitorPauseStateAsync();
 
-            // Kör hela den instrumenterade batchen. CommandTimeout 0 = vänta hur länge som helst
-            // (användaren kan stå pausad i minuter).
-            await execConn.ExecuteAsync(
-                new CommandDefinition(_script.Sql, commandTimeout: 0, cancellationToken: _cts.Token));
+            // Kör batcharna i ordning på samma connection (SESSION_CONTEXT följer med).
+            // CommandTimeout 0 = vänta hur länge som helst (användaren kan stå pausad i minuter).
+            foreach (var batch in _script.Batches)
+            {
+                await execConn.ExecuteAsync(
+                    new CommandDefinition(batch, commandTimeout: 0, cancellationToken: _cts.Token));
+            }
 
             await EmitAsync("terminated", "null");
         }
