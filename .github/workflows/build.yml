@@ -37,6 +37,11 @@ jobs:
           npm ci
           npm run compile
 
+      # Sidecaren buntas in i VSIX:en; extensionen hämtar .NET-runtimen
+      # själv via ms-dotnettools.vscode-dotnet-runtime vid första körningen
+      - name: Bundle sidecar into extension
+        run: dotnet publish sidecar -c Release -o extension/sidecar-dist
+
       - name: Package VSIX
         working-directory: extension
         run: npx -y @vscode/vsce package

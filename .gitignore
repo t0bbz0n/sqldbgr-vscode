@@ -3,6 +3,7 @@ out/
 bin/
 !sidecar-npm/bin/
 sidecar-npm/dist/
+extension/sidecar-dist/
 obj/
 *.vsix
 .vscode-test/

@@ -38,12 +38,23 @@ I dev-hosten: öppna en `.sql`-fil, skapa en launch-konfiguration av typen
 
 ### Sidecaren startar automatiskt
 
-Ingen backend behöver startas för hand: vid F5 probar extensionen
-`sidecarUrl` (`/health`) och startar annars sidecaren själv via
-`npx -y tsql-debugger-sidecar` (npm-paketet i `sidecar-npm/`, kräver
-.NET 8-runtime). Processen ägs av extensionen och städas undan när den
-avaktiveras; en sidecar man startat själv rörs aldrig. Loggarna hamnar i
-output-kanalen **T-SQL Debugger Sidecar**.
+Ingen backend behöver startas för hand, och ingen .NET behöver vara
+installerad: vid F5 probar extensionen `sidecarUrl` (`/health`) och startar
+annars sidecaren själv. Startkommandot väljs i ordning:
+
+1. `sidecarCommand` från launch-konfigurationen (dev-override, se nedan)
+2. Den **buntade sidecaren i VSIX:en** (`extension/sidecar-dist/`), körd med
+   en ASP.NET Core 8-runtime som [.NET Install Tool-extensionen]
+   (ms-dotnettools.vscode-dotnet-runtime, ett extension-beroende) laddar ner
+   automatiskt vid första körningen. Finns runtimen redan svarar den direkt.
+   Utan Install Tool (t.ex. i dev-hosten) provas systemets `dotnet`.
+3. `npx -y tsql-debugger-sidecar` (npm-paketet i `sidecar-npm/`) - fallback
+   när ingen buntad sidecar finns. Kör `npm run bundle-sidecar` i
+   `extension/` för att slippa den i dev-hosten.
+
+Processen ägs av extensionen och städas undan när den avaktiveras; en
+sidecar man startat själv rörs aldrig. Loggarna hamnar i output-kanalen
+**T-SQL Debugger Sidecar**.
 
 Under utveckling (opublicerat paket / lokala ändringar) pekar man om
 startkommandot i launch-konfigurationen:
