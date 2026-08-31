@@ -74,9 +74,14 @@ Publicering av sidecar-paketet: `cd sidecar-npm && npm publish`
 
 ## Installera i VS Code
 
-CI (`.github/workflows/build.yml`) bygger VSIX:en och sidecar-npm-tarballen
-på varje push - ladda ner dem under **Actions → körningen → Artifacts**.
-Taggas en `v*`-tagg skapas en GitHub-release med båda filerna bifogade.
+CI (`.github/workflows/build.yml`) bygger VSIX:en på varje push - ladda ner
+den under **Actions → körningen → Artifacts**. Taggas en `v*`-tagg skapas en
+GitHub-release med VSIX:en och sidecar-npm-tarballen bifogade.
+
+Versionering: varje CI-bygge får `major.minor` från `extension/package.json`
+plus run-numret som patch (t.ex. `0.1.7`), stämplat i VSIX, npm-paket och
+sidecar-DLL - `GET /health` svarar med versionen, så det syns exakt vilket
+bygge som kör. Vid `v*`-taggar används taggens version rakt av.
 
 För att bygga och installera lokalt:
 

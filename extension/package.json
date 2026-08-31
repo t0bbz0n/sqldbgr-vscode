@@ -2,7 +2,7 @@
   "name": "tsql-debugger",
   "displayName": "T-SQL Debugger",
   "description": "Breakpoint debugging for T-SQL scripts and stored procedures in SQL Server.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "your-publisher-id",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Debuggers"],

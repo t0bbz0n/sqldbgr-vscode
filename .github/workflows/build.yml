@@ -23,6 +23,23 @@ jobs:
         with:
           node-version: 20
 
+      # Patch räknas upp per bygge (major.minor från package.json + run_number)
+      # så varje VSIX går att särskilja; vid v*-taggar gäller taggens version.
+      - name: Compute build version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            base=$(node -p "require('./extension/package.json').version.split('.').slice(0,2).join('.')")
+            echo "version=$base.$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp version
+        run: |
+          (cd extension && npm version --no-git-tag-version "${{ steps.version.outputs.version }}")
+          (cd sidecar-npm && npm version --no-git-tag-version "${{ steps.version.outputs.version }}")
+
       - name: Build sidecar
         run: dotnet build sidecar -c Release
 
@@ -42,7 +59,7 @@ jobs:
       # Sidecaren buntas in i VSIX:en; extensionen hämtar .NET-runtimen
       # själv via ms-dotnettools.vscode-dotnet-runtime vid första körningen
       - name: Bundle sidecar into extension
-        run: dotnet publish sidecar -c Release -o extension/sidecar-dist
+        run: dotnet publish sidecar -c Release -o extension/sidecar-dist -p:Version="${{ steps.version.outputs.version }}"
 
       - name: Package VSIX
         working-directory: extension
@@ -51,7 +68,7 @@ jobs:
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
-          name: tsql-debugger-vsix
+          name: tsql-debugger-vsix-${{ steps.version.outputs.version }}
           path: extension/*.vsix
           if-no-files-found: error
 
