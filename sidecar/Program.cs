@@ -18,11 +18,21 @@ var sessions = new ConcurrentDictionary<Guid, DebugSessionRunner>();
 var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "tsql-debugger-sidecar", version }));
 
+// Hittar en ev. funktions-/procedurdefinition i filen så extensionen kan
+// erbjuda "debugga kroppen" och fråga efter parametervärden.
+app.MapPost("/inspect", async (InspectRequest req) =>
+{
+    var source = await File.ReadAllTextAsync(req.ProgramPath);
+    return Results.Ok(new { module = new ScriptDomAnalyzer().InspectModule(source) });
+});
+
 app.MapPost("/session/start", async (StartSessionRequest req) =>
 {
     var source = await File.ReadAllTextAsync(req.ProgramPath);
     var analyzer = new ScriptDomAnalyzer();
-    var instrumented = analyzer.Instrument(source, req.ProgramPath);
+    var instrumented = req.Mode == "module"
+        ? analyzer.InstrumentModuleBody(source, req.ProgramPath)
+        : analyzer.Instrument(source, req.ProgramPath);
 
     if (instrumented.Errors.Count > 0)
         return Results.BadRequest(new { message = "Parse errors", errors = instrumented.Errors });
@@ -90,5 +100,6 @@ public record StartSessionRequest(
     string Mode,
     Dictionary<string, object?> Params);
 
+public record InspectRequest(string ProgramPath);
 public record BreakpointsRequest(int[] StmtIds);
 public record SignalRequest(string Command);

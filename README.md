@@ -117,8 +117,11 @@ marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 - [x] Verklig source-mappning i paused-events (rad/kolumn + slutposition,
       exakt statement highlightas i editorn)
 - [x] Locals: TABLE-variabler som expanderbart träd (variablesReference)
+- [x] Modulläge: F5 på ett `CREATE FUNCTION`/`PROCEDURE`-script debuggar
+      kroppen som script - parametervärden matas in vid start, `RETURN`
+      fångas i `@__dbg_return` (syns i Locals)
 - [ ] Step-into i stored procedures (inline-expansion, virtuella source-filer)
-- [ ] Invoke-läge med parameterpanel
+- [ ] Invoke-läge med riktig parameterpanel (nu: inputrutor i sekvens)
 - [ ] Conditional breakpoints
 - [ ] Deploy/backup/restore av procs från fil (remote-förberedelse)
 - [ ] Attach-läge + licens (betald del, separat repo)
@@ -126,9 +129,15 @@ marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 ## Kända begränsningar just nu
 
 - Modul-definitioner (`CREATE PROCEDURE`/`FUNCTION`/`VIEW`/`TRIGGER`)
-  körs men instrumenteras inte - det går inte att pausa inne i dem.
-  Att debugga *anropet* av en proc är roadmap (step-into/invoke-läge);
-  scalar-funktioner kan aldrig pausas (UDF:er tillåter inga sidoeffekter).
+  som körs som script instrumenteras inte - använd modulläget (F5 på
+  filen -> "Debugga funktionen/proceduren") för att debugga kroppen.
+  Att pausa i den *deployade* modulen går inte: scalar-funktioner
+  tillåter inga sidoeffekter, och step-into i procs är roadmap.
+- Modulläget kör kroppen som en batch: `RETURN` mitt i skrivs om och
+  avslutar batchen, men beteendeskillnader kan finnas (t.ex. refererar
+  kroppen sig själv rekursivt krävs att modulen redan är deployad).
+- Parametervärden binds som `NVARCHAR`-parametrar och konverteras
+  implicit - ange datum som ISO (`2024-01-31`) för säkerhets skull.
 - Locals-captures körs före `__dbg.Pause` – variabler visar värdet
   *efter* att statementet körts.
 

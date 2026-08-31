@@ -4,8 +4,22 @@ import * as http from 'http';
 export interface StartSessionRequest {
   programPath: string;
   connectionString: string;
-  mode: 'invoke' | 'attach';
+  mode: 'invoke' | 'module' | 'attach';
   params: Record<string, unknown>;
+}
+
+export interface ModuleParameter {
+  name: string;
+  typeName: string;
+  defaultValue: string | null;
+}
+
+export interface ModuleInfo {
+  kind: 'function' | 'procedure';
+  name: string;
+  parameters: ModuleParameter[];
+  canScriptify: boolean;
+  reason: string | null;
 }
 
 export interface ParseResult {
@@ -43,6 +57,11 @@ export class SidecarClient extends EventEmitter {
   private sseRequest: http.ClientRequest | null = null;
 
   constructor(private baseUrl: string) { super(); }
+
+  /** Sessionslös: hittar en ev. funktions-/procedurdefinition i filen. */
+  async inspect(programPath: string): Promise<{ module: ModuleInfo | null }> {
+    return this.post('/inspect', { programPath });
+  }
 
   async startSession(req: StartSessionRequest): Promise<ParseResult> {
     const result = await this.post<ParseResult>('/session/start', req);

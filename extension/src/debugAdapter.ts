@@ -22,7 +22,7 @@ type VariableContainer =
 interface TsqlLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   program: string;
   connectionString: string;
-  mode?: 'invoke' | 'attach';
+  mode?: 'invoke' | 'module' | 'attach';
   params?: Record<string, unknown>;
   sidecarUrl?: string;
 }

@@ -18,6 +18,7 @@ public class DebugSessionRunner
     private readonly string _connectionString;
     private readonly InstrumentedScript _script;
     private readonly string _mode;
+    private readonly Dictionary<string, object?> _parameters;
     private readonly CancellationTokenSource _cts = new();
 
     public DebugSessionRunner(
@@ -27,6 +28,7 @@ public class DebugSessionRunner
         _connectionString = connectionString;
         _script = script;
         _mode = mode;
+        _parameters = parameters;
     }
 
     public async Task RunAsync()
@@ -50,10 +52,12 @@ public class DebugSessionRunner
 
             // Kör batcharna i ordning på samma connection (SESSION_CONTEXT följer med).
             // CommandTimeout 0 = vänta hur länge som helst (användaren kan stå pausad i minuter).
+            // I modulläge binds funktions-/procedurparametrarna som riktiga
+            // query-parametrar - inga literaler, ingen quoting.
             foreach (var batch in _script.Batches)
             {
-                await execConn.ExecuteAsync(
-                    new CommandDefinition(batch, commandTimeout: 0, cancellationToken: _cts.Token));
+                await execConn.ExecuteAsync(new CommandDefinition(
+                    batch, BuildParameters(), commandTimeout: 0, cancellationToken: _cts.Token));
             }
 
             await EmitAsync("terminated", "null");
@@ -171,6 +175,28 @@ public class DebugSessionRunner
         }
         catch { /* best effort */ }
     }
+
+    private DynamicParameters? BuildParameters()
+    {
+        if (_parameters.Count == 0) return null;
+        var dp = new DynamicParameters();
+        foreach (var (name, value) in _parameters)
+            dp.Add(name, NormalizeParamValue(value));
+        return dp;
+    }
+
+    // Värden från extensionen kommer som JsonElement via System.Text.Json.
+    private static object? NormalizeParamValue(object? value) => value is JsonElement je
+        ? je.ValueKind switch
+        {
+            JsonValueKind.String => je.GetString(),
+            JsonValueKind.Number => je.TryGetInt64(out var l) ? l : je.GetDecimal(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => je.GetRawText()
+        }
+        : value;
 
     private async Task EmitAsync(string name, string jsonData)
         => await _events.Writer.WriteAsync(new SidecarEvent(name, jsonData));

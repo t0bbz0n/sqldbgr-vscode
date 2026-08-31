@@ -42,13 +42,13 @@
               },
               "mode": {
                 "type": "string",
-                "enum": ["invoke", "attach"],
+                "enum": ["invoke", "module", "attach"],
                 "default": "invoke",
-                "description": "invoke = kör själv, attach = vänta på markerad trafik (kräver licens mot remote)."
+                "description": "invoke = kör scriptet, module = debugga kroppen på filens CREATE FUNCTION/PROCEDURE med parametervärden, attach = vänta på markerad trafik (kräver licens mot remote)."
               },
               "params": {
                 "type": "object",
-                "description": "Parametervärden vid invoke av stored procedure.",
+                "description": "Parametervärden i modulläge (namn -> värde, null för NULL). Saknade parametrar efterfrågas vid start.",
                 "default": {}
               },
               "sidecarUrl": {

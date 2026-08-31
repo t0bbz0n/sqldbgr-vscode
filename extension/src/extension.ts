@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { TsqlDebugSession } from './debugAdapter';
+import { ModuleInfo, SidecarClient } from './sidecarClient';
 import { SidecarManager } from './sidecarManager';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -59,12 +60,75 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
+        // Innehåller filen en CREATE FUNCTION/PROCEDURE? Erbjud att debugga
+        // kroppen som script med parametervärden (modulläge).
+        if (config.mode !== 'attach' && config.program) {
+          const proceed = await resolveModuleDebugging(config);
+          if (!proceed) return undefined;
+        }
+
         // --- LICENSED FEATURE BOUNDARY ---
         // Remote/attach-gating läggs här senare. Lokal debugging går ALDRIG genom licenskod.
         return config;
       }
     })
   );
+}
+
+/**
+ * F5 på ett CREATE FUNCTION/PROCEDURE-script: fråga om kroppen ska debuggas
+ * (scriptifierad, med parametervärden från inputrutor) eller om scriptet ska
+ * köras som det är. Returnerar false om användaren avbröt launchen.
+ */
+async function resolveModuleDebugging(config: vscode.DebugConfiguration): Promise<boolean> {
+  let module: ModuleInfo | null;
+  try {
+    ({ module } = await new SidecarClient(config.sidecarUrl ?? 'http://localhost:5199')
+      .inspect(config.program));
+  } catch {
+    return true; // sidecaren nere/gammal - kör vidare som vanligt script
+  }
+  if (!module) return true;
+
+  if (config.mode !== 'module') {
+    const kindLabel = module.kind === 'function' ? 'funktionen' : 'proceduren';
+    const choice = await vscode.window.showQuickPick(
+      [
+        ...(module.canScriptify ? [{
+          label: `$(debug-alt) Debugga ${kindLabel} ${module.name}`,
+          description: 'kroppen körs som script med dina parametervärden',
+          value: 'module' as const
+        }] : []),
+        {
+          label: '$(run) Kör scriptet som det är',
+          description: module.canScriptify
+            ? 'CREATE/GRANT körs; inga pauser i modulkroppen'
+            : module.reason ?? undefined,
+          value: 'script' as const
+        }
+      ],
+      { title: `${module.name}: hur vill du köra?`, ignoreFocusOut: true });
+    if (!choice) return false;
+    if (choice.value !== 'module') return true;
+    config.mode = 'module';
+  }
+
+  // Samla parametervärden som inte redan står i launch-konfigurationen
+  config.params ??= {};
+  for (const p of module.parameters) {
+    if (config.params[p.name] !== undefined) continue;
+    const entered = await vscode.window.showInputBox({
+      title: `${module.name} - parametrar`,
+      prompt: `${p.name} ${p.typeName}` +
+        (p.defaultValue !== null ? ` (default: ${p.defaultValue})` : '') +
+        ' - skriv NULL för NULL',
+      value: p.defaultValue ?? '',
+      ignoreFocusOut: true
+    });
+    if (entered === undefined) return false; // Esc - avbryt launchen
+    config.params[p.name] = entered.trim().toUpperCase() === 'NULL' ? null : entered;
+  }
+  return true;
 }
 
 // Fire-and-forget så launchen inte blockeras av frågan.
