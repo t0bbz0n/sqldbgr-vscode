@@ -120,8 +120,9 @@ marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 - [x] Modulläge: F5 på ett `CREATE FUNCTION`/`PROCEDURE`-script debuggar
       kroppen som script - parametervärden matas in vid start, `RETURN`
       fångas i `@__dbg_return` (syns i Locals)
+- [x] Parameterpanel: webview-formulär med alla parametrar, typinfo,
+      NULL-kryss, deklarerade defaults och minne av senast använda värden
 - [ ] Step-into i stored procedures (inline-expansion, virtuella source-filer)
-- [ ] Invoke-läge med riktig parameterpanel (nu: inputrutor i sekvens)
 - [ ] Conditional breakpoints
 - [ ] Deploy/backup/restore av procs från fil (remote-förberedelse)
 - [ ] Attach-läge + licens (betald del, separat repo)
