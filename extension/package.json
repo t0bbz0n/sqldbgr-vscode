@@ -8,6 +8,7 @@
   "categories": ["Debuggers"],
   "activationEvents": ["onDebugResolve:tsql"],
   "main": "./out/extension.js",
+  "extensionDependencies": ["ms-dotnettools.vscode-dotnet-runtime"],
   "contributes": {
     "breakpoints": [{ "language": "sql" }],
     "debuggers": [
@@ -73,7 +74,8 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
-    "package": "vsce package"
+    "bundle-sidecar": "dotnet publish ../sidecar -c Release -o sidecar-dist",
+    "package": "npm run compile && npm run bundle-sidecar && vsce package"
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.65.0",

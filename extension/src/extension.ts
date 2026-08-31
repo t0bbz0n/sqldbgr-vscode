@@ -2,9 +2,8 @@ import * as vscode from 'vscode';
 import { TsqlDebugSession } from './debugAdapter';
 import { SidecarManager } from './sidecarManager';
 
-const sidecarManager = new SidecarManager();
-
 export function activate(context: vscode.ExtensionContext) {
+  const sidecarManager = new SidecarManager(context.extensionPath, context.extension.id);
   context.subscriptions.push(sidecarManager);
 
   // Inline debug adapter - körs i extension host-processen. Enklast under utveckling;
