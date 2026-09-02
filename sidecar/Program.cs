@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using System.Text;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using SqlDebugger.Sidecar.Execution;
 using SqlDebugger.Sidecar.Parsing;
 
@@ -7,9 +10,20 @@ for (var i = 0; i < args.Length - 1; i++)
     if (args[i] == "--port" && int.TryParse(args[i + 1], out var parsed))
         port = parsed;
 
+// Windows-1252-fallback för äldre .sql-filer (svenska åäö utan UTF-8)
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+builder.WebHost.UseUrls($"http://127.0.0.1:{port}"); // --port 0 = slumpport (en sidecar per VS Code-fönster)
 var app = builder.Build();
+
+// Extensionen läser den faktiska adressen från stdout när porten är slumpad.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var address = app.Services.GetRequiredService<IServer>()
+        .Features.Get<IServerAddressesFeature>()?.Addresses.FirstOrDefault();
+    Console.WriteLine($"SQLDBGR_SIDECAR_URL={address}");
+});
 
 var sessions = new ConcurrentDictionary<Guid, DebugSessionRunner>();
 
@@ -22,7 +36,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "sqldbgr-s
 // erbjuda "debugga kroppen" och fråga efter parametervärden.
 app.MapPost("/inspect", async (InspectRequest req) =>
 {
-    var source = await File.ReadAllTextAsync(req.ProgramPath);
+    var source = await ReadSourceAsync(req.ProgramPath);
     return Results.Ok(new { module = new ScriptDomAnalyzer().InspectModule(source) });
 });
 
@@ -45,7 +59,7 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
     }
     var debugSchema = $"[{database.Replace("]", "]]")}].__dbg";
 
-    var source = await File.ReadAllTextAsync(req.ProgramPath);
+    var source = await ReadSourceAsync(req.ProgramPath);
     var analyzer = new ScriptDomAnalyzer();
     var instrumented = req.Mode == "module"
         ? analyzer.InstrumentModuleBody(source, req.ProgramPath, debugSchema)
@@ -121,6 +135,27 @@ app.MapPost("/shutdown", (IHostApplicationLifetime lifetime) =>
 });
 
 app.Run();
+
+/// <summary>BOM styr om den finns; annars strikt UTF-8 med fallback till
+/// Windows-1252 - vanligt i äldre svenska .sql-filer, som annars får trasiga åäö.</summary>
+static async Task<string> ReadSourceAsync(string path)
+{
+    var bytes = await File.ReadAllBytesAsync(path);
+    if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+    if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+    if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+    try
+    {
+        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes);
+    }
+    catch (DecoderFallbackException)
+    {
+        return Encoding.GetEncoding(1252).GetString(bytes);
+    }
+}
 
 public record StartSessionRequest(
     string ProgramPath,

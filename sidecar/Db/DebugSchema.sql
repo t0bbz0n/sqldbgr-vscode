@@ -12,8 +12,14 @@ CREATE TABLE __dbg.Control (
     Command           NVARCHAR(20)     NOT NULL DEFAULT 'entry', -- continue|stepOver|stepIn|entry|abort
     Signaled          BIT              NOT NULL DEFAULT 0,
     PausedAtStmt      INT              NULL,          -- NULL = kör, annars pausad vid stmt
+    PauseSeq          INT              NOT NULL DEFAULT 0, -- stegas per paus; monitorn jämför denna
     LastHeartbeatUtc  DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME()
 );
+GO
+
+-- Migrering av äldre installationer
+IF COL_LENGTH(N'__dbg.Control', N'PauseSeq') IS NULL
+    ALTER TABLE __dbg.Control ADD PauseSeq INT NOT NULL DEFAULT 0;
 GO
 
 IF OBJECT_ID(N'__dbg.Locals') IS NULL
@@ -24,6 +30,24 @@ CREATE TABLE __dbg.Locals (
     Value     NVARCHAR(MAX)    NULL,
     INDEX IX_Locals_Session (SessionId)
 );
+GO
+
+-- Billig förkontroll som instrumenteringen anropar före varje statement:
+-- bara när den svarar 1 görs den dyra capturen av tabellvariabler och
+-- anropet till __dbg.Pause. 'abort' ger 1 så Pause hinner kasta.
+CREATE OR ALTER FUNCTION __dbg.ShouldPause(@sid UNIQUEIDENTIFIER, @stmt_id INT)
+RETURNS BIT
+AS
+BEGIN
+    IF @sid IS NULL RETURN 0;
+    DECLARE @cmd NVARCHAR(20), @bp NVARCHAR(MAX);
+    SELECT @cmd = Command, @bp = ActiveBreakpoints
+    FROM __dbg.Control WHERE SessionId = @sid;
+    IF @cmd IS NULL RETURN 0;
+    IF @cmd <> 'continue' RETURN 1;
+    IF @bp IS NOT NULL AND EXISTS (SELECT 1 FROM OPENJSON(@bp) WHERE value = @stmt_id) RETURN 1;
+    RETURN 0;
+END
 GO
 
 CREATE OR ALTER PROCEDURE __dbg.Pause
@@ -51,8 +75,9 @@ BEGIN
             SELECT 1 FROM OPENJSON(@bp) WHERE value = @stmt_id))
         RETURN;
 
-    -- Markera pausad och vänta på signal från klienten
-    UPDATE __dbg.Control SET PausedAtStmt = @stmt_id, Signaled = 0
+    -- Markera pausad och vänta på signal från klienten. PauseSeq stegas så
+    -- monitorn ser även upprepade pauser på samma statement (loopar).
+    UPDATE __dbg.Control SET PausedAtStmt = @stmt_id, Signaled = 0, PauseSeq = PauseSeq + 1
     WHERE SessionId = @sid;
 
     DECLARE @signaled BIT = 0;

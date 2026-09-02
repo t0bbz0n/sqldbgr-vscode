@@ -50,18 +50,21 @@ export function activate(context: vscode.ExtensionContext) {
           offerToSaveConnectionString(entered);
         }
 
+        // Sidecar: egen per fönster på slumpport, eller den angivna sidecarUrl.
+        // Adaptern får den faktiska adressen via config.sidecarUrl.
         if (config.autoStartSidecar !== false) {
-          const sidecarUrl: string = config.sidecarUrl ?? 'http://localhost:5199';
           try {
-            await vscode.window.withProgress(
+            config.sidecarUrl = await vscode.window.withProgress(
               { location: vscode.ProgressLocation.Notification, title: 'Startar sqldbgr-sidecar…' },
-              () => sidecarManager.ensureRunning(sidecarUrl, config.sidecarCommand));
+              () => sidecarManager.ensureRunning(config.sidecarUrl, config.sidecarCommand));
           } catch (err) {
             vscode.window.showErrorMessage(
               `sqldbgr: ${(err as Error).message}`);
             return undefined;
           }
         }
+
+        config.sidecarUrl ??= 'http://localhost:5199'; // autoStartSidecar: false utan egen URL
 
         // Innehåller filen en CREATE FUNCTION/PROCEDURE? Erbjud att debugga
         // kroppen som script med parametervärden (modulläge).

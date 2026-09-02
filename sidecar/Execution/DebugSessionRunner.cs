@@ -35,6 +35,7 @@ public class DebugSessionRunner
     private volatile bool _faulted;
     private int _currentBatch = -1;
     private int? _lastPausedStmt;
+    private int _lastPauseSeq;
 
     public DebugSessionRunner(
         string connectionString, InstrumentedScript script,
@@ -111,8 +112,10 @@ public class DebugSessionRunner
     {
         // CommandTimeout 0 = vänta hur länge som helst (användaren kan stå pausad i minuter).
         await using var cmd = new SqlCommand(sql, conn) { CommandTimeout = 0 };
+        // Binds som @__p_<namn>; modulpreludet deklarerar om dem med signaturens typ.
         foreach (var (name, value) in _parameters)
-            cmd.Parameters.AddWithValue(name, NormalizeParamValue(value) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue(ScriptDomAnalyzer.BoundParameterName(name),
+                NormalizeParamValue(value) ?? DBNull.Value);
 
         // Reader i stället för Execute så resultatmängder (SELECT) kan visas
         // i Debug Console i stället för att kastas bort.
@@ -276,12 +279,15 @@ public class DebugSessionRunner
 
             while (!_cts.IsCancellationRequested)
             {
-                var state = await conn.QuerySingleOrDefaultAsync<(int? PausedAtStmt, string? Command)>(
-                    "SELECT PausedAtStmt, Command FROM __dbg.Control WHERE SessionId = @sid",
+                var state = await conn.QuerySingleOrDefaultAsync<(int? PausedAtStmt, string? Command, int PauseSeq)>(
+                    "SELECT PausedAtStmt, Command, PauseSeq FROM __dbg.Control WHERE SessionId = @sid",
                     new { sid = SessionId });
 
-                if (state.PausedAtStmt is int stmt && stmt != _lastPausedStmt)
+                // PauseSeq (inte statement-id) avgör om det är en NY paus: en loop
+                // pausar på samma id varje varv, snabbare än pollintervallet.
+                if (state.PausedAtStmt is int stmt && state.PauseSeq != _lastPauseSeq)
                 {
+                    _lastPauseSeq = state.PauseSeq;
                     _lastPausedStmt = stmt;
                     var span = _script.StmtToSpan.GetValueOrDefault(stmt);
                     var reason = state.Command switch
@@ -296,10 +302,6 @@ public class DebugSessionRunner
                         text = (string?)null,
                         stack = new[] { StackFrame(span, 1) }
                     }));
-                }
-                else if (state.PausedAtStmt is null)
-                {
-                    _lastPausedStmt = null;
                 }
 
                 await Task.Delay(50, _cts.Token);

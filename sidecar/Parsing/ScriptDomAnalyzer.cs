@@ -60,6 +60,13 @@ public record ModuleInfo(
 public class ScriptDomAnalyzer
 {
     private const string Header = "-- Instrumenterad av sqldbgr. Deployas ALDRIG permanent.";
+    private const string SidDeclaration =
+        "DECLARE @__dbg_sid UNIQUEIDENTIFIER = CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'));";
+
+    /// <summary>Namnet runnern binder en modulparameter under; preludet deklarerar
+    /// om den med rätt typ: DECLARE @a INT = @__p_a.</summary>
+    public static string BoundParameterName(string parameterName)
+        => "@__p_" + parameterName.TrimStart('@');
 
     /// <summary>Hittar första funktions-/procedurdefinitionen i scriptet, för
     /// extensionens "debugga kroppen?"-fråga och parameterinsamling.</summary>
@@ -111,33 +118,66 @@ public class ScriptDomAnalyzer
         if (module is null || statementList is null)
             return Empty(sourcePath, ["Hittade ingen funktions-/procedurkropp att debugga."]);
 
-        var ctx = new Context(sql, debugSchema) { ReturnVariable = "@__dbg_return" };
+        var prelude = new StringBuilder();
+        prelude.AppendLine(Header);
+        prelude.AppendLine(SidDeclaration);
+        prelude.AppendLine("SET DATEFORMAT ymd;"); // ISO-datum i parametrar är entydiga oavsett språk
 
-        var (parameters, returnType) = module switch
+        // Parametrarna binds av runnern som @__p_<namn> (NVARCHAR) och deklareras
+        // här om med signaturens typ - SQL Server gör konverteringen, så INT
+        // förblir INT (ingen strängkonkatenering) och fel syns som SQL-fel.
+        IList<ProcedureParameter> parameters = module switch
         {
-            FunctionStatementBody fn => (fn.Parameters,
-                fn.ReturnType is ScalarFunctionReturnType scalar
-                    ? GetText(sql, scalar.DataType) : "SQL_VARIANT"),
-            ProcedureStatementBody proc => (proc.Parameters, "INT"),
+            FunctionStatementBody fn => fn.Parameters,
+            ProcedureStatementBody proc => proc.Parameters,
             _ => throw new InvalidOperationException()
         };
+        var declared = new List<DeclaredVariable>();
         foreach (var p in parameters)
-            ctx.Declared.Add(new DeclaredVariable(
-                p.VariableName.Value, GetText(sql, p.DataType), IsTable: false));
-        ctx.Declared.Add(new DeclaredVariable(ctx.ReturnVariable, returnType, IsTable: false));
+        {
+            var typeText = GetText(sql, p.DataType);
+            prelude.AppendLine($"DECLARE {p.VariableName.Value} {typeText} = {BoundParameterName(p.VariableName.Value)};");
+            declared.Add(new DeclaredVariable(p.VariableName.Value, typeText, IsTable: false));
+        }
 
-        var resultVariables = new List<string> { ctx.ReturnVariable };
+        // Returvärde: skalär funktion/proc -> @__dbg_return; multi-statement TVF ->
+        // dess RETURNS @t TABLE (...) deklareras och rapporteras som resultat.
+        string? returnVariable = "@__dbg_return";
+        var resultVariables = new List<string>();
+        switch (module)
+        {
+            case FunctionStatementBody { ReturnType: ScalarFunctionReturnType scalar }:
+                var returnType = GetText(sql, scalar.DataType);
+                prelude.AppendLine($"DECLARE @__dbg_return {returnType};");
+                declared.Add(new DeclaredVariable("@__dbg_return", returnType, IsTable: false));
+                break;
+            case FunctionStatementBody { ReturnType: TableValuedFunctionReturnType tvf }:
+                returnVariable = null;
+                prelude.AppendLine($"DECLARE {GetText(sql, tvf.DeclareTableVariableBody)};");
+                declared.Add(new DeclaredVariable(tvf.DeclareTableVariableBody.VariableName.Value, "TABLE", IsTable: true));
+                resultVariables.Add(tvf.DeclareTableVariableBody.VariableName.Value);
+                break;
+            case FunctionStatementBody:
+                return Empty(sourcePath, ["Funktionens returtyp stöds inte i modulläge."]);
+            default: // procedure
+                prelude.AppendLine("DECLARE @__dbg_return INT;");
+                declared.Add(new DeclaredVariable("@__dbg_return", "INT", IsTable: false));
+                break;
+        }
+        if (returnVariable is not null) resultVariables.Insert(0, returnVariable);
         resultVariables.AddRange(parameters
             .Where(p => p.Modifier == ParameterModifier.Output)
             .Select(p => p.VariableName.Value));
+
+        var ctx = new Context(sql, debugSchema) { IsModule = true, ReturnVariable = returnVariable };
+        ctx.Declared.AddRange(declared);
 
         var injections = new List<Injection>();
         foreach (var stmt in statementList.Statements)
             InstrumentStatement(stmt, injections, ctx);
         AddEndOfBatchPause(statementList, injections, ctx);
 
-        var prefix = $"{Header}\nDECLARE {ctx.ReturnVariable} {returnType};\n";
-        var batch = Splice(ctx, statementList.StartOffset, EndOffset(statementList), injections, prefix);
+        var batch = Splice(ctx, statementList.StartOffset, EndOffset(statementList), injections, prelude.ToString());
 
         return new InstrumentedScript
         {
@@ -176,8 +216,11 @@ public class ScriptDomAnalyzer
 
             if (string.IsNullOrWhiteSpace(GetText(sql, batch))) continue;
 
-            // SESSION_CONTEXT (satt av runnern) bär sessionId genom alla batchar.
-            batches.Add(Splice(ctx, batch.StartOffset, EndOffset(batch), injections, Header + "\n"));
+            // SESSION_CONTEXT (satt av runnern) bär sessionId genom alla batchar; den
+            // läses in i en variabel per batch. Inte i batchar utan instrumentering
+            // (CREATE PROC måste vara första statementet i sin batch).
+            var prefix = injections.Count > 0 ? $"{Header}\n{SidDeclaration}\n" : $"{Header}\n";
+            batches.Add(Splice(ctx, batch.StartOffset, EndOffset(batch), injections, prefix));
         }
 
         return new InstrumentedScript
@@ -295,7 +338,7 @@ public class ScriptDomAnalyzer
     private void InstrumentReturn(ReturnStatement ret, List<Injection> injections, Context ctx)
     {
         var id = ctx.RegisterStatement(ret.StartLine, ComputeSpan(ret));
-        if (ctx.ReturnVariable is not null) ctx.FinalStmtIds.Add(id);
+        if (ctx.IsModule) ctx.FinalStmtIds.Add(id);
 
         var text = new StringBuilder();
         text.AppendLine();
@@ -323,8 +366,14 @@ public class ScriptDomAnalyzer
     {
         var text = new StringBuilder();
         text.AppendLine();
-        text.Append(BuildLocalsCapture(ctx));
-        text.AppendLine($"EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
+        text.Append(BuildScalarCapture(ctx));
+        // Den dyra delen (tabellvariabler som JSON + proc-anropet) bara när det
+        // faktiskt blir en paus - annars kostar varje statement i en loop.
+        text.AppendLine($"IF {ctx.Dbg}.ShouldPause(@__dbg_sid, {stmtId}) = 1");
+        text.AppendLine("BEGIN");
+        text.Append(BuildTableCapture(ctx));
+        text.AppendLine($"    EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
+        text.AppendLine("END");
         return text.ToString();
     }
 
@@ -405,37 +454,46 @@ public class ScriptDomAnalyzer
         }
     }
 
-    private static string BuildLocalsCapture(Context ctx)
+    /// <summary>Skalära variabler: en DELETE + en INSERT ... VALUES per statement.</summary>
+    private static string BuildScalarCapture(Context ctx)
     {
-        var vars = ctx.Declared;
-        if (vars.Count == 0) return string.Empty;
-
+        if (ctx.Declared.Count == 0) return string.Empty;
         var sb = new StringBuilder();
-        sb.AppendLine($"DELETE FROM {ctx.Dbg}.Locals WHERE SessionId = CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'));");
+        sb.AppendLine($"DELETE FROM {ctx.Dbg}.Locals WHERE SessionId = @__dbg_sid;");
 
-        foreach (var v in vars)
+        var scalars = ctx.Declared.Where(v => !v.IsTable).ToList();
+        if (scalars.Count == 0) return sb.ToString();
+
+        sb.AppendLine($"INSERT INTO {ctx.Dbg}.Locals (SessionId, Name, TypeName, Value) VALUES");
+        sb.AppendLine(string.Join(",\n", scalars.Select(v =>
+            $"    (@__dbg_sid, '{v.Name}', '{v.TypeName.Replace("'", "''")}', {ValueExpression(v)})")) + ";");
+        return sb.ToString();
+    }
+
+    private static string BuildTableCapture(Context ctx)
+    {
+        var sb = new StringBuilder();
+        foreach (var v in ctx.Declared.Where(v => v.IsTable))
         {
-            var typeLiteral = v.TypeName.Replace("'", "''");
-            if (v.IsTable)
-            {
-                sb.AppendLine($"""
+            sb.AppendLine($"""
                     INSERT INTO {ctx.Dbg}.Locals (SessionId, Name, TypeName, Value)
-                    SELECT CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session')),
-                           '{v.Name}', 'TABLE',
+                    SELECT @__dbg_sid, '{v.Name}', 'TABLE',
                            (SELECT * FROM {v.Name} FOR JSON AUTO, INCLUDE_NULL_VALUES);
-                    """);
-            }
-            else
-            {
-                sb.AppendLine($"""
-                    INSERT INTO {ctx.Dbg}.Locals (SessionId, Name, TypeName, Value)
-                    VALUES (CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session')),
-                            '{v.Name}', '{typeLiteral}',
-                            TRY_CONVERT(NVARCHAR(MAX), {v.Name}));
-                    """);
-            }
+                """);
         }
         return sb.ToString();
+    }
+
+    /// <summary>Textrepresentation per typ: datum som ISO 8601 (stil 126, annars
+    /// språkberoende "Jan 31 2024"), binärt som hex (stil 1), övrigt TRY_CONVERT.</summary>
+    private static string ValueExpression(DeclaredVariable v)
+    {
+        var t = v.TypeName.ToLowerInvariant();
+        if (t.StartsWith("date") || t.StartsWith("time") || t.StartsWith("smalldatetime"))
+            return $"CONVERT(NVARCHAR(MAX), {v.Name}, 126)";
+        if (t.StartsWith("binary") || t.StartsWith("varbinary") || t is "timestamp" or "rowversion")
+            return $"CONVERT(NVARCHAR(MAX), {v.Name}, 1)";
+        return $"TRY_CONVERT(NVARCHAR(MAX), {v.Name})";
     }
 
     private static InstrumentedScript Empty(string sourcePath, List<string> errors) => new()
@@ -467,7 +525,8 @@ public class ScriptDomAnalyzer
         public string Sql { get; }
         /// <summary>Kvalificerat schemanamn för __dbg-objekten, t.ex. "[MyDb].__dbg".</summary>
         public string Dbg { get; }
-        /// <summary>Satt i modulläge: variabeln som RETURN-uttryck fångas i.</summary>
+        public bool IsModule { get; init; }
+        /// <summary>Modulläge: variabeln som RETURN-uttryck fångas i (null för TVF).</summary>
         public string? ReturnVariable { get; init; }
         public Dictionary<int, int> LineMap { get; } = [];
         public Dictionary<int, StatementSpan> StmtToSpan { get; } = [];

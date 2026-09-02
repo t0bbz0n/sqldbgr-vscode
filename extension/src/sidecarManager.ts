@@ -12,10 +12,12 @@ const HEALTH_POLL_INTERVAL_MS = 250;
 const STARTUP_TIMEOUT_MS = 120_000;
 
 /**
- * Ser till att sidecaren kör innan en debug-session startar. Om inget svarar
- * på /health spawnas den och processen ägs av extensionen: den städas undan
- * vid deactivate. En sidecar som användaren startat själv rörs aldrig - då
- * svarar health-proben och vi spawnar inget.
+ * Ser till att en sidecar kör innan en debug-session startar och returnerar
+ * dess URL. Default: varje VS Code-fönster startar sin EGEN sidecar på en
+ * slumpport (--port 0; adressen läses från stdout) - då kan fönster aldrig
+ * ta över eller döda varandras sidecar. Anges `sidecarUrl` explicit används
+ * den (egenstartad sidecar), och startas på den porten om inget svarar.
+ * Processen ägs av extensionen och städas undan vid deactivate.
  *
  * Startkommandot väljs i ordning:
  *  1. sidecarCommand från launch-konfigurationen (dev-override)
@@ -27,6 +29,9 @@ const STARTUP_TIMEOUT_MS = 120_000;
 export class SidecarManager implements vscode.Disposable {
   private proc: ChildProcess | null = null;
   private output: vscode.OutputChannel | null = null;
+  /** URL:en för sidecaren vi själva startat (slumpport eller explicit). */
+  private ownUrl: string | null = null;
+  private urlFromStdout: Promise<string> | null = null;
 
   constructor(
     private readonly extensionPath: string,
@@ -34,20 +39,44 @@ export class SidecarManager implements vscode.Disposable {
     private readonly expectedVersion: string
   ) {}
 
-  async ensureRunning(sidecarUrl: string, command?: string[]): Promise<void> {
-    if (await this.isHealthy(sidecarUrl)) {
-      // En kvarlämnad äldre sidecar (från en tidigare VS Code-instans) svarar
-      // friskt men saknar nya endpoints - byt ut den. Dev-override hoppar över
-      // kontrollen (dotnet run stämplar ingen version).
-      if (command?.length || !(await this.isStale(sidecarUrl))) return;
-      await this.replaceStale(sidecarUrl);
+  async ensureRunning(explicitUrl: string | undefined, command?: string[]): Promise<string> {
+    if (explicitUrl) {
+      if (await this.isHealthy(explicitUrl)) {
+        // En kvarlämnad äldre sidecar svarar friskt men saknar nya endpoints -
+        // byt ut den. Dev-override hoppar över kontrollen (dotnet run stämplar
+        // ingen version).
+        if (command?.length || !(await this.isStale(explicitUrl))) return explicitUrl;
+        await this.replaceStale(explicitUrl);
+      }
+      if (!this.isOwnProcessAlive()) {
+        await this.startProcess(await this.resolveCommand(new URL(explicitUrl).port || '5199', command));
+        this.ownUrl = explicitUrl;
+      }
+      await this.waitForHealthy(explicitUrl);
+      return explicitUrl;
     }
 
-    if (!this.proc || this.proc.exitCode !== null) {
-      const port = new URL(sidecarUrl).port || '5199';
-      await this.startProcess(await this.resolveCommand(port, command));
+    // Egen sidecar per fönster på slumpport
+    if (this.isOwnProcessAlive() && this.ownUrl && await this.isHealthy(this.ownUrl)) {
+      return this.ownUrl;
     }
-    await this.waitForHealthy(sidecarUrl);
+    await this.startProcess(await this.resolveCommand('0', command));
+    this.ownUrl = await this.waitForUrl();
+    await this.waitForHealthy(this.ownUrl);
+    return this.ownUrl;
+  }
+
+  private isOwnProcessAlive(): boolean {
+    return this.proc !== null && this.proc.exitCode === null;
+  }
+
+  /** Sidecaren skriver "SQLDBGR_SIDECAR_URL=http://127.0.0.1:<port>" när den lyssnar. */
+  private async waitForUrl(): Promise<string> {
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => {
+      this.output?.show(true);
+      reject(new Error(`sidecaren rapporterade ingen adress inom ${STARTUP_TIMEOUT_MS / 1000}s - se output-kanalen "sqldbgr Sidecar".`));
+    }, STARTUP_TIMEOUT_MS));
+    return Promise.race([this.urlFromStdout!, timeout]);
   }
 
   private async isStale(sidecarUrl: string): Promise<boolean> {
@@ -122,7 +151,21 @@ export class SidecarManager implements vscode.Disposable {
     // shell krävs för npx.cmd på Windows; en exe-sökväg ska INTE gå via shell
     // (sökvägar med mellanslag går sönder av shell-quoting)
     this.proc = spawn(exe, args, { shell: process.platform === 'win32' && exe === 'npx' });
-    this.proc.stdout?.on('data', (d: Buffer) => this.output?.append(d.toString()));
+    this.ownUrl = null;
+
+    let resolveUrl: (url: string) => void = () => {};
+    let rejectUrl: (err: Error) => void = () => {};
+    this.urlFromStdout = new Promise<string>((res, rej) => { resolveUrl = res; rejectUrl = rej; });
+    this.urlFromStdout.catch(() => { /* hanteras av waitForUrl */ });
+    let stdoutBuffer = '';
+    this.proc.stdout?.on('data', (d: Buffer) => {
+      const text = d.toString();
+      this.output?.append(text);
+      stdoutBuffer += text;
+      const m = /SQLDBGR_SIDECAR_URL=(\S+)/.exec(stdoutBuffer);
+      if (m) resolveUrl(m[1].replace(/\/$/, ''));
+    });
+    this.proc.on('exit', code => rejectUrl(new Error(`sidecar-processen avslutades med kod ${code}`)));
     this.proc.stderr?.on('data', (d: Buffer) => this.output?.append(d.toString()));
     this.proc.on('error', err => this.output?.appendLine(`[fel] ${err.message}`));
     this.proc.on('exit', code => this.output?.appendLine(`[avslutad] exit code ${code}`));

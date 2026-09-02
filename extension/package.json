@@ -60,13 +60,12 @@
               },
               "sidecarUrl": {
                 "type": "string",
-                "default": "http://localhost:5199",
-                "description": "URL till sidecar-tjänsten."
+                "description": "URL till en sidecar. Utelämnas normalt: varje VS Code-fönster startar då sin egen sidecar på en slumpport. Ange bara om du kör sidecaren själv (t.ex. http://localhost:5199)."
               },
               "autoStartSidecar": {
                 "type": "boolean",
                 "default": true,
-                "description": "Starta sidecaren automatiskt (via npx) om ingen redan svarar på sidecarUrl."
+                "description": "Starta en egen sidecar automatiskt (buntad i extensionen). Sätt false för att bara använda sidecarUrl."
               },
               "sidecarCommand": {
                 "type": "array",

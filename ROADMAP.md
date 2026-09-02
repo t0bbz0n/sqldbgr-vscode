@@ -11,7 +11,9 @@ abort som dödar batchen, paus-före-semantik, PRINT/resultat i Debug Console,
 SQL-fel mappade till originalrad med exception-stopp, slutläge i modulläge,
 `USE`-säker schemakvalificering, versionskontroll av kvarlämnad sidecar.
 
-## Fas 2 – buggar hittade i andra genomgången
+## Fas 2 – buggar hittade i andra genomgången ✅
+
+*Klar. Punkterna behålls som beskrivning av vad som gjordes.*
 
 1. **Upprepade stopp på samma statement missas.** `[S]` *Bugg.* Monitorn
    känner igen en ny paus på att `PausedAtStmt` ändrats. En `WHILE` vars
