@@ -81,6 +81,20 @@ startkommandot i launch-konfigurationen:
 Publicering av sidecar-paketet: `cd sidecar-npm && npm publish`
 (prepack kör `dotnet publish` till `dist/`).
 
+## Tester
+
+```bash
+cd tests/SqlDebugger.Sidecar.Tests
+dotnet test                                    # enhetstester (analysatorn)
+SQLDBGR_TEST_CONNECTION="Server=localhost;User Id=sa;Password=...;TrustServerCertificate=true" \
+  dotnet test                                  # + integrationstester mot SQL Server
+```
+
+Integrationstesterna skapar databasen `sqldbgr_test` och kör hela
+pausmekaniken (breakpoints, stegning, loopar, abort, exception-stopp,
+modulläge) mot servern. CI kör dem mot `mcr.microsoft.com/mssql/server`
+som service-container på varje push.
+
 ## Installera i VS Code
 
 CI (`.github/workflows/build.yml`) bygger VSIX:en på varje push - ladda ner
@@ -139,8 +153,8 @@ Detaljerad plan framåt med prioriteringar: se [ROADMAP.md](ROADMAP.md).
 - Modulläget kör kroppen som en batch: `RETURN` mitt i skrivs om och
   avslutar batchen, men beteendeskillnader kan finnas (t.ex. refererar
   kroppen sig själv rekursivt krävs att modulen redan är deployad).
-- Parametervärden binds som `NVARCHAR`-parametrar och konverteras
-  implicit - ange datum som ISO (`2024-01-31`) för säkerhets skull.
+- Modulparametrar anges som text och konverteras av SQL Server till
+  signaturens typ; datum anges som ISO (`2024-01-31`).
 
 ## Licens
 

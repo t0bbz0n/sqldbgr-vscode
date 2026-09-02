@@ -10,6 +10,38 @@ permissions:
   contents: write # för release-steget vid taggar; övriga körningar läser bara
 
 jobs:
+  # Enhetstester (analysatorn) + integrationstester av pausmekaniken mot en
+  # riktig SQL Server i en service-container. Det enda som verifierar
+  # runtime-beteendet (Pause/abort/exception-stopp/modulläge) automatiskt.
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: Sqldbgr!Test123
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Sqldbgr!Test123' -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run tests
+        env:
+          SQLDBGR_TEST_CONNECTION: "Server=localhost,1433;User Id=sa;Password=Sqldbgr!Test123;TrustServerCertificate=true;Connect Timeout=10"
+        run: dotnet test tests/SqlDebugger.Sidecar.Tests --logger "console;verbosity=normal"
+
   build:
     runs-on: ubuntu-latest
     steps:
