@@ -9,7 +9,7 @@ IF OBJECT_ID(N'__dbg.Control') IS NULL
 CREATE TABLE __dbg.Control (
     SessionId         UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     ActiveBreakpoints NVARCHAR(MAX)    NULL,          -- JSON-array av stmt_id
-    Command           NVARCHAR(20)     NOT NULL DEFAULT 'entry', -- continue|stepOver|stepIn|entry
+    Command           NVARCHAR(20)     NOT NULL DEFAULT 'entry', -- continue|stepOver|stepIn|entry|abort
     Signaled          BIT              NOT NULL DEFAULT 0,
     PausedAtStmt      INT              NULL,          -- NULL = kör, annars pausad vid stmt
     LastHeartbeatUtc  DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME()
@@ -42,6 +42,9 @@ BEGIN
 
     IF @cmd IS NULL RETURN;  -- ingen kontrollrad: kör obehindrat
 
+    -- 'abort' (Stop i klienten): döda batchen här, inga fler statements körs.
+    IF @cmd = 'abort' THROW 50099, 'tsql-debugger: sessionen avbröts', 1;
+
     -- 'continue': pausa bara vid breakpoint. 'stepOver'/'stepIn'/'entry': pausa alltid.
     IF @cmd = 'continue'
        AND (@bp IS NULL OR NOT EXISTS (
@@ -56,11 +59,13 @@ BEGIN
     WHILE @signaled = 0
     BEGIN
         WAITFOR DELAY '00:00:00.050';
-        SELECT @signaled = Signaled FROM __dbg.Control WHERE SessionId = @sid;
+        SELECT @signaled = Signaled, @cmd = Command FROM __dbg.Control WHERE SessionId = @sid;
         IF @signaled IS NULL RETURN; -- sessionen städad utifrån: släpp igenom
     END
 
     UPDATE __dbg.Control SET Signaled = 0, PausedAtStmt = NULL
     WHERE SessionId = @sid;
+
+    IF @cmd = 'abort' THROW 50099, 'tsql-debugger: sessionen avbröts', 1;
 END
 GO

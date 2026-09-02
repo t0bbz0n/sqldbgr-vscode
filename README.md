@@ -33,8 +33,13 @@ npm run compile
 # Öppna extension/ i VS Code, F5 -> Extension Development Host
 ```
 
-I dev-hosten: öppna en `.sql`-fil, sätt breakpoints, F5. Ingen launch.json
-behövs - saknas `connectionString` hämtas den från settingen
+I dev-hosten: öppna en `.sql`-fil, sätt breakpoints, F5. Körningen stannar
+på breakpoints (eller på första statementet med `stopOnEntry: true`); det
+highlightade statementet är det som körs härnäst och Locals visar läget
+innan det körs. `PRINT`, resultatmängder och SQL-fel hamnar i Debug Console;
+ett SQL-fel stannar på den felande raden så Locals kan inspekteras. Efter
+sista statementet finns ett virtuellt stopp (vid stegning) som visar
+slutläget. Ingen launch.json behövs - saknas `connectionString` hämtas den från settingen
 `tsql-debugger.connectionString`, och finns inte den heller frågar
 extensionen efter en vid start (med erbjudande att spara i settings).
 Vill man styra mer skapar man en launch-konfiguration av typen `tsql`
@@ -136,8 +141,6 @@ Detaljerad plan framåt med prioriteringar: se [ROADMAP.md](ROADMAP.md).
   kroppen sig själv rekursivt krävs att modulen redan är deployad).
 - Parametervärden binds som `NVARCHAR`-parametrar och konverteras
   implicit - ange datum som ISO (`2024-01-31`) för säkerhets skull.
-- Locals-captures körs före `__dbg.Pause` – variabler visar värdet
-  *efter* att statementet körts.
 
 ## Licens
 

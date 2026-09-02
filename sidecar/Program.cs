@@ -26,13 +26,30 @@ app.MapPost("/inspect", async (InspectRequest req) =>
     return Results.Ok(new { module = new ScriptDomAnalyzer().InspectModule(source) });
 });
 
+// Parsar och instrumenterar men kör INTE - klienten sätter breakpoints först
+// och anropar sedan /run (DAP configurationDone).
 app.MapPost("/session/start", async (StartSessionRequest req) =>
 {
+    // Anslut tidigt: ger ett begripligt fel direkt, och databasnamnet behövs för
+    // att kvalificera __dbg-anropen så USE i scriptet inte bryter pauserna.
+    string database;
+    try
+    {
+        await using var probe = new Microsoft.Data.SqlClient.SqlConnection(req.ConnectionString);
+        await probe.OpenAsync();
+        database = probe.Database;
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = $"Kunde inte ansluta: {ex.Message}" });
+    }
+    var debugSchema = $"[{database.Replace("]", "]]")}].__dbg";
+
     var source = await File.ReadAllTextAsync(req.ProgramPath);
     var analyzer = new ScriptDomAnalyzer();
     var instrumented = req.Mode == "module"
-        ? analyzer.InstrumentModuleBody(source, req.ProgramPath)
-        : analyzer.Instrument(source, req.ProgramPath);
+        ? analyzer.InstrumentModuleBody(source, req.ProgramPath, debugSchema)
+        : analyzer.Instrument(source, req.ProgramPath, debugSchema);
 
     if (instrumented.Errors.Count > 0)
         return Results.BadRequest(new { message = "Parse errors", errors = instrumented.Errors });
@@ -40,14 +57,18 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
     var runner = new DebugSessionRunner(req.ConnectionString, instrumented, req.Mode, req.Params);
     sessions[runner.SessionId] = runner;
 
-    // Kör batchen i bakgrunden - den blockerar i __dbg.Pause tills klienten signalerar
-    _ = runner.RunAsync();
-
     return Results.Ok(new
     {
         sessionId = runner.SessionId,
         lineMap = instrumented.LineMap.Select(kv => new { line = kv.Key, stmtId = kv.Value })
     });
+});
+
+app.MapPost("/session/{id:guid}/run", (Guid id, RunRequest req) =>
+{
+    if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
+    // Batchen körs i bakgrunden - den blockerar i __dbg.Pause tills klienten signalerar
+    return runner.TryStart(req.StopOnEntry) ? Results.Ok() : Results.Conflict();
 });
 
 app.MapPost("/session/{id:guid}/breakpoints", async (Guid id, BreakpointsRequest req) =>
@@ -92,6 +113,13 @@ app.MapPost("/session/{id:guid}/stop", async (Guid id) =>
     return Results.Ok();
 });
 
+// Låter en nyare extension byta ut en kvarlämnad äldre sidecar.
+app.MapPost("/shutdown", (IHostApplicationLifetime lifetime) =>
+{
+    lifetime.StopApplication();
+    return Results.Ok();
+});
+
 app.Run();
 
 public record StartSessionRequest(
@@ -101,5 +129,6 @@ public record StartSessionRequest(
     Dictionary<string, object?> Params);
 
 public record InspectRequest(string ProgramPath);
+public record RunRequest(bool StopOnEntry);
 public record BreakpointsRequest(int[] StmtIds);
 public record SignalRequest(string Command);

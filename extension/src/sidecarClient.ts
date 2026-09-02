@@ -44,13 +44,26 @@ export interface StackFrameInfo {
 }
 
 export interface PausedEvent {
-  reason: 'breakpoint' | 'step' | 'entry';
+  reason: 'breakpoint' | 'step' | 'entry' | 'exception';
+  /** Felmeddelande vid reason === 'exception'. */
+  text: string | null;
   stack: StackFrameInfo[];
+}
+
+export interface OutputEvent {
+  category: 'stdout' | 'stderr';
+  text: string;
+}
+
+export interface HealthInfo {
+  status: string;
+  service: string;
+  version: string;
 }
 
 /**
  * Pratar med sidecaren över HTTP + Server-Sent Events.
- * Events: 'paused' (PausedEvent), 'output' (string), 'terminated', 'error' (string)
+ * Events: 'paused' (PausedEvent), 'output' (OutputEvent), 'terminated', 'error' (string)
  */
 export class SidecarClient extends EventEmitter {
   private sessionId: string | null = null;
@@ -63,11 +76,27 @@ export class SidecarClient extends EventEmitter {
     return this.post('/inspect', { programPath });
   }
 
+  /** Parsar och instrumenterar; körningen startar först vid run(). */
   async startSession(req: StartSessionRequest): Promise<ParseResult> {
     const result = await this.post<ParseResult>('/session/start', req);
     this.sessionId = result.sessionId;
     this.openEventStream(result.sessionId);
     return result;
+  }
+
+  /** Startar körningen - anropas när alla breakpoints är satta (configurationDone). */
+  async run(stopOnEntry: boolean): Promise<void> {
+    if (!this.sessionId) return;
+    await this.post(`/session/${this.sessionId}/run`, { stopOnEntry });
+  }
+
+  async health(): Promise<HealthInfo> {
+    return this.get<HealthInfo>('/health');
+  }
+
+  /** Ber sidecaren avsluta sig själv (används för att byta ut en äldre version). */
+  async shutdown(): Promise<void> {
+    await this.post('/shutdown', {});
   }
 
   async setBreakpoints(stmtIds: number[]): Promise<void> {
@@ -121,7 +150,7 @@ export class SidecarClient extends EventEmitter {
     if (!data) return;
     switch (event) {
       case 'paused': this.emit('paused', JSON.parse(data) as PausedEvent); break;
-      case 'output': this.emit('output', JSON.parse(data) as string); break;
+      case 'output': this.emit('output', JSON.parse(data) as OutputEvent); break;
       case 'terminated': this.emit('terminated'); break;
       case 'error': this.emit('error', JSON.parse(data) as string); break;
     }

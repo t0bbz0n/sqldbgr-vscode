@@ -4,7 +4,7 @@ import {
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import * as path from 'path';
-import { SidecarClient, PausedEvent, LocalVar } from './sidecarClient';
+import { SidecarClient, PausedEvent, LocalVar, OutputEvent as SidecarOutput } from './sidecarClient';
 import { BreakpointMapper } from './breakpointMapper';
 
 const THREAD_ID = 1;
@@ -25,6 +25,7 @@ interface TsqlLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   mode?: 'invoke' | 'module' | 'attach';
   params?: Record<string, unknown>;
   sidecarUrl?: string;
+  stopOnEntry?: boolean;
 }
 
 export class TsqlDebugSession extends LoggingDebugSession {
@@ -33,6 +34,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
   private programPath = '';
   private currentStack: PausedEvent['stack'] = [];
   private variableHandles = new Handles<VariableContainer>();
+  private stopOnEntry = false;
 
   protected initializeRequest(response: DebugProtocol.InitializeResponse): void {
     response.body = {
@@ -41,7 +43,9 @@ export class TsqlDebugSession extends LoggingDebugSession {
       supportsEvaluateForHovers: false
     };
     this.sendResponse(response);
-    this.sendEvent(new InitializedEvent());
+    // InitializedEvent skickas först när sidecaren parsat filen (i launchRequest):
+    // VS Code svarar på den med setBreakpoints, och då måste mappern vara laddad
+    // och sessionen finnas - annars tappas breakpoints satta före F5.
   }
 
   protected async launchRequest(
@@ -53,10 +57,10 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.sidecar.on('paused', (e: PausedEvent) => {
       this.currentStack = e.stack;
       this.variableHandles.reset(); // gamla referenser är ogiltiga vid nytt stopp
-      this.sendEvent(new StoppedEvent(e.reason, THREAD_ID));
+      this.sendEvent(new StoppedEvent(e.reason, THREAD_ID, e.text ?? undefined));
     });
-    this.sidecar.on('output', (text: string) => {
-      this.sendEvent(new OutputEvent(text + '\n', 'stdout'));
+    this.sidecar.on('output', (o: SidecarOutput) => {
+      this.sendEvent(new OutputEvent(o.text.endsWith('\n') ? o.text : o.text + '\n', o.category));
     });
     this.sidecar.on('terminated', () => this.sendEvent(new TerminatedEvent()));
     this.sidecar.on('error', (msg: string) => {
@@ -72,10 +76,25 @@ export class TsqlDebugSession extends LoggingDebugSession {
         params: args.params ?? {}
       });
       this.mapper.load(args.program, parsed.lineMap);
+      this.stopOnEntry = args.stopOnEntry === true;
       this.sendResponse(response);
+      // Nu kan breakpoints tas emot; configurationDone startar körningen.
+      this.sendEvent(new InitializedEvent());
     } catch (err) {
       this.sendErrorResponse(response, 1001,
         `Kunde inte starta debug-session: ${(err as Error).message}`);
+    }
+  }
+
+  protected async configurationDoneRequest(
+    response: DebugProtocol.ConfigurationDoneResponse
+  ): Promise<void> {
+    try {
+      await this.sidecar.run(this.stopOnEntry);
+      this.sendResponse(response);
+    } catch (err) {
+      this.sendErrorResponse(response, 1002,
+        `Kunde inte starta körningen: ${(err as Error).message}`);
     }
   }
 
@@ -97,10 +116,11 @@ export class TsqlDebugSession extends LoggingDebugSession {
       }
     }
 
-    // Sessionen kan vara ostartad när VS Code skickar breakpoints - mappern
-    // cachar dem och launchRequest pushar efter parse.
+    // Sidecaren håller breakpoints i minnet tills körningen startar, och
+    // uppdaterar Control-raden under pågående session.
     if (this.sidecar) {
-      await this.sidecar.setBreakpoints(stmtIds).catch(() => { /* pushas vid launch */ });
+      await this.sidecar.setBreakpoints(stmtIds).catch(err =>
+        this.sendEvent(new OutputEvent(`[sidecar] breakpoints: ${(err as Error).message}\n`, 'stderr')));
     }
 
     response.body = { breakpoints: verified };

@@ -51,6 +51,11 @@
                 "description": "Parametervärden i modulläge (namn -> värde, null för NULL). Saknade parametrar efterfrågas vid start.",
                 "default": {}
               },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Stanna på första statementet även utan breakpoints."
+              },
               "sidecarUrl": {
                 "type": "string",
                 "default": "http://localhost:5199",
@@ -85,7 +90,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
-    "bundle-sidecar": "dotnet publish ../sidecar -c Release -o sidecar-dist",
+    "bundle-sidecar": "node scripts/bundle-sidecar.js",
     "package": "npm run compile && npm run bundle-sidecar && vsce package"
   },
   "dependencies": {
