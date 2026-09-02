@@ -5,7 +5,9 @@ import { ModuleInfo, SidecarClient } from './sidecarClient';
 import { SidecarManager } from './sidecarManager';
 
 export function activate(context: vscode.ExtensionContext) {
-  const sidecarManager = new SidecarManager(context.extensionPath, context.extension.id);
+  const sidecarManager = new SidecarManager(
+    context.extensionPath, context.extension.id,
+    String((context.extension.packageJSON as { version: string }).version));
   context.subscriptions.push(sidecarManager);
 
   // Inline debug adapter - körs i extension host-processen. Enklast under utveckling;

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { SidecarClient } from './sidecarClient';
 
 const NPX_FALLBACK_COMMAND = ['npx', '-y', 'tsql-debugger-sidecar'];
 const HEALTH_PROBE_TIMEOUT_MS = 1000;
@@ -29,17 +30,44 @@ export class SidecarManager implements vscode.Disposable {
 
   constructor(
     private readonly extensionPath: string,
-    private readonly extensionId: string
+    private readonly extensionId: string,
+    private readonly expectedVersion: string
   ) {}
 
   async ensureRunning(sidecarUrl: string, command?: string[]): Promise<void> {
-    if (await this.isHealthy(sidecarUrl)) return;
+    if (await this.isHealthy(sidecarUrl)) {
+      // En kvarlämnad äldre sidecar (från en tidigare VS Code-instans) svarar
+      // friskt men saknar nya endpoints - byt ut den. Dev-override hoppar över
+      // kontrollen (dotnet run stämplar ingen version).
+      if (command?.length || !(await this.isStale(sidecarUrl))) return;
+      await this.replaceStale(sidecarUrl);
+    }
 
     if (!this.proc || this.proc.exitCode !== null) {
       const port = new URL(sidecarUrl).port || '5199';
       await this.startProcess(await this.resolveCommand(port, command));
     }
     await this.waitForHealthy(sidecarUrl);
+  }
+
+  private async isStale(sidecarUrl: string): Promise<boolean> {
+    try {
+      const health = await new SidecarClient(sidecarUrl).health();
+      return health.version !== this.expectedVersion;
+    } catch {
+      return true; // svarar men utan version = gammal
+    }
+  }
+
+  private async replaceStale(sidecarUrl: string): Promise<void> {
+    this.channel().appendLine(`[version] sidecaren på ${sidecarUrl} är en annan version än ${this.expectedVersion} - startar om`);
+    try { await new SidecarClient(sidecarUrl).shutdown(); } catch { /* gammal utan /shutdown */ }
+    this.proc?.kill();
+    this.proc = null;
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && await this.isHealthy(sidecarUrl)) {
+      await new Promise(r => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
+    }
   }
 
   dispose(): void {
