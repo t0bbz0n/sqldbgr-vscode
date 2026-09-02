@@ -4,11 +4,16 @@ import {
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import * as path from 'path';
-import { SidecarClient, PausedEvent, LocalVar, OutputEvent as SidecarOutput } from './sidecarClient';
+import {
+  SidecarClient, PausedEvent, LocalVar, BreakpointSpec,
+  OutputEvent as SidecarOutput, ResultSetEvent
+} from './sidecarClient';
 import { BreakpointMapper } from './breakpointMapper';
+import { addResult, clearResults } from './resultStore';
 
 const THREAD_ID = 1;
 const MAX_ROW_SUMMARY_LENGTH = 80;
+const RETURN_VARIABLE = '@__dbg_return';
 
 type TableRow = Record<string, unknown>;
 
@@ -25,22 +30,30 @@ interface TsqlLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   mode?: 'invoke' | 'module' | 'attach';
   params?: Record<string, unknown>;
   sidecarUrl?: string;
+  sidecarToken?: string;
   stopOnEntry?: boolean;
+  transaction?: 'none' | 'rollback' | 'commit';
+  debugDatabase?: string;
 }
 
 export class TsqlDebugSession extends LoggingDebugSession {
   private sidecar!: SidecarClient;
   private mapper = new BreakpointMapper();
-  private programPath = '';
+  private launchArgs!: TsqlLaunchArgs;
   private currentStack: PausedEvent['stack'] = [];
   private variableHandles = new Handles<VariableContainer>();
-  private stopOnEntry = false;
+  /** Senast satta breakpoints per fil - skickas om vid restart. */
+  private breakpointsBySource = new Map<string, DebugProtocol.SourceBreakpoint[]>();
 
   protected initializeRequest(response: DebugProtocol.InitializeResponse): void {
     response.body = {
       supportsConfigurationDoneRequest: true,
-      supportsConditionalBreakpoints: false, // TODO: fas 2
-      supportsEvaluateForHovers: false
+      supportsConditionalBreakpoints: true,
+      supportsHitConditionalBreakpoints: true,
+      supportsLogPoints: true,
+      supportsEvaluateForHovers: true,
+      supportsSetVariable: true,
+      supportsRestartRequest: true
     };
     this.sendResponse(response);
     // InitializedEvent skickas först när sidecaren parsat filen (i launchRequest):
@@ -51,8 +64,25 @@ export class TsqlDebugSession extends LoggingDebugSession {
   protected async launchRequest(
     response: DebugProtocol.LaunchResponse, args: TsqlLaunchArgs
   ): Promise<void> {
-    this.programPath = args.program;
-    this.sidecar = new SidecarClient(args.sidecarUrl ?? 'http://localhost:5199');
+    this.launchArgs = args;
+    try {
+      await this.startSession();
+      this.sendResponse(response);
+      // Nu kan breakpoints tas emot; configurationDone startar körningen.
+      this.sendEvent(new InitializedEvent());
+    } catch (err) {
+      this.sendErrorResponse(response, 1001,
+        `Could not start debug session: ${(err as Error).message}`);
+    }
+  }
+
+  /** Parsar filen i sidecaren och kopplar upp eventströmmen (utan att köra). */
+  private async startSession(): Promise<void> {
+    const args = this.launchArgs;
+    this.sidecar = new SidecarClient(args.sidecarUrl ?? 'http://localhost:5199', args.sidecarToken);
+    this.currentStack = [];
+    this.variableHandles.reset();
+    clearResults();
 
     this.sidecar.on('paused', (e: PausedEvent) => {
       this.currentStack = e.stack;
@@ -62,39 +92,49 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.sidecar.on('output', (o: SidecarOutput) => {
       this.sendEvent(new OutputEvent(o.text.endsWith('\n') ? o.text : o.text + '\n', o.category));
     });
+    this.sidecar.on('resultset', (r: ResultSetEvent) => addResult(r));
     this.sidecar.on('terminated', () => this.sendEvent(new TerminatedEvent()));
     this.sidecar.on('error', (msg: string) => {
       this.sendEvent(new OutputEvent(`[sidecar] ${msg}\n`, 'stderr'));
       this.sendEvent(new TerminatedEvent());
     });
 
-    try {
-      const parsed = await this.sidecar.startSession({
-        programPath: args.program,
-        connectionString: args.connectionString,
-        mode: args.mode ?? 'invoke',
-        params: args.params ?? {}
-      });
-      this.mapper.load(args.program, parsed.lineMap);
-      this.stopOnEntry = args.stopOnEntry === true;
-      this.sendResponse(response);
-      // Nu kan breakpoints tas emot; configurationDone startar körningen.
-      this.sendEvent(new InitializedEvent());
-    } catch (err) {
-      this.sendErrorResponse(response, 1001,
-        `Kunde inte starta debug-session: ${(err as Error).message}`);
-    }
+    const parsed = await this.sidecar.startSession({
+      programPath: args.program,
+      connectionString: args.connectionString,
+      mode: args.mode ?? 'invoke',
+      params: args.params ?? {},
+      transaction: args.transaction ?? 'none',
+      debugDatabase: args.debugDatabase
+    });
+    this.mapper.load(args.program, parsed.statements);
   }
 
   protected async configurationDoneRequest(
     response: DebugProtocol.ConfigurationDoneResponse
   ): Promise<void> {
     try {
-      await this.sidecar.run(this.stopOnEntry);
+      await this.sidecar.run(this.launchArgs.stopOnEntry === true);
       this.sendResponse(response);
     } catch (err) {
       this.sendErrorResponse(response, 1002,
-        `Kunde inte starta körningen: ${(err as Error).message}`);
+        `Could not start execution: ${(err as Error).message}`);
+    }
+  }
+
+  /** Ctrl+Shift+F5: ny session med samma argument och breakpoints, utan omfrågning. */
+  protected async restartRequest(response: DebugProtocol.RestartResponse): Promise<void> {
+    try {
+      await this.sidecar.stopSession().catch(() => {});
+      this.sidecar.removeAllListeners();
+      await this.startSession();
+      for (const [source, bps] of this.breakpointsBySource) {
+        await this.sidecar.setBreakpoints(this.mapBreakpoints(source, bps).specs);
+      }
+      await this.sidecar.run(this.launchArgs.stopOnEntry === true);
+      this.sendResponse(response);
+    } catch (err) {
+      this.sendErrorResponse(response, 1003, `Restart failed: ${(err as Error).message}`);
     }
   }
 
@@ -102,29 +142,40 @@ export class TsqlDebugSession extends LoggingDebugSession {
     response: DebugProtocol.SetBreakpointsResponse,
     args: DebugProtocol.SetBreakpointsArguments
   ): Promise<void> {
+    const source = args.source.path!;
     const requested = args.breakpoints ?? [];
-    const verified: Breakpoint[] = [];
-    const stmtIds: number[] = [];
-
-    for (const bp of requested) {
-      const snapped = this.mapper.snapToStatement(args.source.path!, bp.line);
-      if (snapped) {
-        verified.push(new Breakpoint(true, snapped.line));
-        stmtIds.push(snapped.stmtId);
-      } else {
-        verified.push(new Breakpoint(false, bp.line));
-      }
-    }
+    this.breakpointsBySource.set(source, requested);
+    const { verified, specs } = this.mapBreakpoints(source, requested);
 
     // Sidecaren håller breakpoints i minnet tills körningen startar, och
     // uppdaterar Control-raden under pågående session.
     if (this.sidecar) {
-      await this.sidecar.setBreakpoints(stmtIds).catch(err =>
+      await this.sidecar.setBreakpoints(specs).catch(err =>
         this.sendEvent(new OutputEvent(`[sidecar] breakpoints: ${(err as Error).message}\n`, 'stderr')));
     }
 
     response.body = { breakpoints: verified };
     this.sendResponse(response);
+  }
+
+  private mapBreakpoints(source: string, requested: DebugProtocol.SourceBreakpoint[]) {
+    const verified: Breakpoint[] = [];
+    const specs: BreakpointSpec[] = [];
+    for (const bp of requested) {
+      const snapped = this.mapper.snapToStatement(source, bp.line);
+      if (snapped) {
+        verified.push(new Breakpoint(true, snapped.line));
+        specs.push({
+          stmtId: snapped.stmtId,
+          condition: bp.condition || null,
+          hitCondition: bp.hitCondition || null,
+          logMessage: bp.logMessage || null
+        });
+      } else {
+        verified.push(new Breakpoint(false, bp.line));
+      }
+    }
+    return { verified, specs };
   }
 
   protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
@@ -138,8 +189,8 @@ export class TsqlDebugSession extends LoggingDebugSession {
         const frame = new StackFrame(
           i,
           f.frameName,
-          new Source(path.basename(f.sourcePath ?? this.programPath),
-                     f.sourcePath ?? this.programPath),
+          new Source(path.basename(f.sourcePath ?? this.launchArgs.program),
+                     f.sourcePath ?? this.launchArgs.program),
           f.line,
           f.column
         );
@@ -193,21 +244,31 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.sendResponse(response);
   }
 
-  private toVariable(v: LocalVar): Variable {
-    if (v.typeName !== 'TABLE') {
-      return new Variable(v.name, v.value ?? 'NULL');
+  private toVariable(v: LocalVar): DebugProtocol.Variable {
+    const displayName = v.name === RETURN_VARIABLE ? '(return value)' : v.name;
+    const tableMatch = /^TABLE(?:\((\d+)\))?$/.exec(v.typeName);
+    if (!tableMatch) {
+      const variable: DebugProtocol.Variable = new Variable(displayName, v.value ?? 'NULL');
+      variable.type = v.typeName;
+      variable.evaluateName = v.name;
+      return variable;
     }
 
-    // Sidecaren serialiserar TABLE-variabler som en JSON-array av rader
-    // (FOR JSON AUTO); NULL betyder tom tabell.
+    // Sidecaren serialiserar TABLE-variabler som en JSON-array av de första
+    // raderna (FOR JSON AUTO); NULL betyder tom tabell; TABLE(n) bär totalen.
     const rows = this.parseTableRows(v.value);
+    const total = tableMatch[1] !== undefined ? Number(tableMatch[1]) : rows?.length ?? 0;
     if (rows === null) {
-      return new Variable(v.name, v.value ?? 'TABLE (0 rader)');
+      return new Variable(displayName, v.value ?? 'TABLE (0 rows)');
     }
-    const ref = rows.length > 0
-      ? this.variableHandles.create({ kind: 'rows', rows })
-      : 0;
-    return new Variable(v.name, `TABLE (${rows.length} rader)`, ref);
+    const ref = rows.length > 0 ? this.variableHandles.create({ kind: 'rows', rows }) : 0;
+    const label = rows.length < total
+      ? `TABLE (${total} rows, first ${rows.length} shown)`
+      : `TABLE (${total} rows)`;
+    const variable: DebugProtocol.Variable = new Variable(displayName, label, ref);
+    variable.type = 'TABLE';
+    variable.evaluateName = v.name;
+    return variable;
   }
 
   private parseTableRows(value: string | null): TableRow[] | null {
@@ -235,6 +296,60 @@ export class TsqlDebugSession extends LoggingDebugSession {
     return String(cell);
   }
 
+  /** Hover: bara variabelnamn (allt annat ignoreras). Watch/REPL: godtyckligt T-SQL-uttryck. */
+  protected async evaluateRequest(
+    response: DebugProtocol.EvaluateResponse,
+    args: DebugProtocol.EvaluateArguments
+  ): Promise<void> {
+    const expression = args.expression.trim();
+    const isVariable = /^[@#][\w$#@]*$/.test(expression);
+    if (args.context === 'hover' && !isVariable) {
+      this.sendErrorResponse(response, 2001, 'not a variable');
+      return;
+    }
+
+    if (isVariable) {
+      const local = (await this.sidecar.getLocals()).find(l => l.name.toLowerCase() === expression.toLowerCase());
+      if (!local) {
+        this.sendErrorResponse(response, 2002, `${expression} is not in scope`);
+        return;
+      }
+      const v = this.toVariable(local);
+      response.body = { result: v.value, type: v.type, variablesReference: v.variablesReference };
+      this.sendResponse(response);
+      return;
+    }
+
+    const { value, error } = await this.sidecar.evaluate(expression);
+    if (error) {
+      this.sendErrorResponse(response, 2003, error);
+      return;
+    }
+    response.body = { result: value ?? 'NULL', variablesReference: 0 };
+    this.sendResponse(response);
+  }
+
+  /** Nytt värde tar effekt när batchen fortsätter; NULL (skiftlägesokänsligt) sätter NULL. */
+  protected async setVariableRequest(
+    response: DebugProtocol.SetVariableResponse,
+    args: DebugProtocol.SetVariableArguments
+  ): Promise<void> {
+    const container = this.variableHandles.get(args.variablesReference);
+    if (container?.kind !== 'locals') {
+      this.sendErrorResponse(response, 2004, 'Only scalar local variables can be changed');
+      return;
+    }
+    const name = args.name === '(return value)' ? RETURN_VARIABLE : args.name;
+    const value = args.value.trim().toUpperCase() === 'NULL' ? null : args.value;
+    try {
+      await this.sidecar.setVariable(name, value);
+      response.body = { value: value ?? 'NULL' };
+      this.sendResponse(response);
+    } catch (err) {
+      this.sendErrorResponse(response, 2005, (err as Error).message);
+    }
+  }
+
   protected async continueRequest(response: DebugProtocol.ContinueResponse): Promise<void> {
     await this.sidecar.signal('continue');
     this.sendResponse(response);
@@ -247,6 +362,12 @@ export class TsqlDebugSession extends LoggingDebugSession {
 
   protected async stepInRequest(response: DebugProtocol.StepInResponse): Promise<void> {
     await this.sidecar.signal('stepIn');
+    this.sendResponse(response);
+  }
+
+  /** Pause-knappen: batchen stannar vid nästa statement. */
+  protected async pauseRequest(response: DebugProtocol.PauseResponse): Promise<void> {
+    await this.sidecar.signal('stepOver');
     this.sendResponse(response);
   }
 

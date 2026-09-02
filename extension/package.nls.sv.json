@@ -1,0 +1,21 @@
+{
+  "config.connectionString": "SQL Server connection string som används när launch-konfigurationen saknar en. Lämna tom för att bli tillfrågad vid start (svaret kan sparas säkert i SecretStorage).",
+  "config.moduleFiles": "Vad F5 gör på en fil som definierar en procedur/funktion: fråga, debugga kroppen med parametrar, eller kör scriptet som det är.",
+  "command.debugCurrentFile": "Debugga aktuell fil",
+  "command.debugModule": "Debugga procedur/funktion med parametrar",
+  "command.openLastResults": "Öppna senaste resultatmängd",
+  "command.forgetConnection": "Glöm sparad anslutningssträng",
+  "launch.program": "Sökväg till .sql-filen som ska debuggas.",
+  "launch.connectionString": "SQL Server connection string.",
+  "launch.mode": "invoke = kör scriptet, module = debugga kroppen på filens CREATE FUNCTION/PROCEDURE med parametervärden, attach = vänta på markerad trafik (kräver licens mot remote).",
+  "launch.params": "Parametervärden i modulläge (namn -> värde, null för NULL). Saknade parametrar efterfrågas vid start.",
+  "launch.stopOnEntry": "Stanna på första statementet även utan breakpoints.",
+  "launch.transaction": "Kör scriptet i en transaktion: rollback = ångra alla ändringar när sessionen avslutas (dry run), commit = committa i slutet, none = autocommit som vanligt.",
+  "launch.debugDatabase": "Databas där debugschemat __dbg skapas (default: anslutningens databas). Använd när du saknar DDL-rätt i måldatabasen.",
+  "launch.sidecarUrl": "URL till en sidecar. Utelämnas normalt: varje VS Code-fönster startar då sin egen sidecar på en slumpport. Ange bara om du kör sidecaren själv (t.ex. http://localhost:5199).",
+  "launch.sidecarToken": "Bearer-token för en egenstartad sidecar (dess SQLDBGR_TOKEN). Utelämnas för den automatiskt startade sidecaren.",
+  "launch.autoStartSidecar": "Starta en egen sidecar automatiskt (buntad i extensionen). Sätt false för att bara använda sidecarUrl.",
+  "launch.sidecarCommand": "Kommando som startar sidecaren; --port läggs på automatiskt. Default: den buntade sidecaren. Under utveckling: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"].",
+  "snippet.local": "sqldbgr: debugga ett T-SQL-script lokalt",
+  "snippet.dryrun": "sqldbgr: debugga med rollback (dry run)"
+}

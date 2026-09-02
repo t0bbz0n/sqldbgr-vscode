@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Dapper;
 using Microsoft.Data.SqlClient;
@@ -11,12 +12,24 @@ namespace SqlDebugger.Sidecar.Execution;
 public record SidecarEvent(string Name, string JsonData);
 public record LocalVar(string Name, string TypeName, string? Value);
 
+/// <summary>Breakpoint med ev. villkor, träffräkning och logpoint-meddelande
+/// (utvärderas av sidecaren mot fångade locals - ingen ominstrumentering).</summary>
+public record BreakpointSpec(int StmtId, string? Condition, string? HitCondition, string? LogMessage);
+
+public record DebugSessionOptions(
+    string Mode,
+    string Transaction,           // none | rollback | commit
+    string DebugDatabase);        // databasen där __dbg-schemat ligger
+
 public class DebugSessionRunner
 {
     /// <summary>Felnummer som __dbg.Pause kastar vid abort - skiljer avbrott från riktiga fel.</summary>
     public const int AbortErrorNumber = 50099;
-    private const int MaxResultRows = 100;
+    public const int HeartbeatLostErrorNumber = 50098;
+    private const int MaxConsoleRows = 100;
+    private const int MaxStoredRows = 5000;
     private const int MaxCellWidth = 40;
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
 
     public Guid SessionId { get; } = Guid.NewGuid();
     public ChannelReader<SidecarEvent> Events => _events.Reader;
@@ -24,13 +37,15 @@ public class DebugSessionRunner
     private readonly Channel<SidecarEvent> _events = Channel.CreateUnbounded<SidecarEvent>();
     private readonly string _connectionString;
     private readonly InstrumentedScript _script;
-    private readonly string _mode;
+    private readonly DebugSessionOptions _options;
     private readonly Dictionary<string, object?> _parameters;
+    private readonly string _dbg; // "[Db].__dbg"
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource _resumeAfterFault =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private int[] _breakpoints = [];
+    private Dictionary<int, BreakpointSpec> _breakpoints = [];
+    private readonly Dictionary<int, int> _hitCounts = [];
     private bool _started;
     private volatile bool _faulted;
     private int _currentBatch = -1;
@@ -39,12 +54,13 @@ public class DebugSessionRunner
 
     public DebugSessionRunner(
         string connectionString, InstrumentedScript script,
-        string mode, Dictionary<string, object?> parameters)
+        DebugSessionOptions options, Dictionary<string, object?> parameters)
     {
         _connectionString = connectionString;
         _script = script;
-        _mode = mode;
+        _options = options;
         _parameters = parameters;
+        _dbg = $"[{options.DebugDatabase.Replace("]", "]]")}].__dbg";
     }
 
     /// <summary>Startar körningen. Anropas först när klienten satt sina breakpoints
@@ -59,27 +75,32 @@ public class DebugSessionRunner
 
     private async Task RunAsync(bool stopOnEntry)
     {
+        SqlConnection? execConn = null;
         try
         {
             // Connection 1: exekverar batcharna (blockerar i __dbg.Pause)
-            await using var execConn = new SqlConnection(_connectionString);
+            execConn = new SqlConnection(_connectionString);
             execConn.InfoMessage += (_, e) => EmitOutput(e.Message, "stdout"); // PRINT/RAISERROR < 11
             await execConn.OpenAsync(_cts.Token);
 
-            await EnsureDebugSchemaAsync(execConn);
+            await EnsureDebugSchemaAsync();
             await execConn.ExecuteAsync(
                 "EXEC sp_set_session_context @key = N'__dbg_session', @value = @sid",
                 new { sid = SessionId });
             await execConn.ExecuteAsync(
-                "INSERT INTO __dbg.Control (SessionId, Command, Signaled, ActiveBreakpoints) VALUES (@sid, @cmd, 0, @bp)",
+                $"INSERT INTO {_dbg}.Control (SessionId, Command, SignalSeq, ActiveBreakpoints) VALUES (@sid, @cmd, 0, @bp)",
                 new { sid = SessionId, cmd = stopOnEntry ? "entry" : "continue", bp = EffectiveBreakpointsJson() });
 
-            // Övervakningsloop på separat connection: upptäcker paus och pushar events
+            // Övervakningsloop på separat connection: upptäcker paus, pushar events, heartbeat
             _ = MonitorPauseStateAsync();
 
+            if (_options.Transaction is "rollback" or "commit")
+            {
+                await execConn.ExecuteAsync("BEGIN TRANSACTION");
+                EmitOutput($"-- transaction: {_options.Transaction} (all changes are {(_options.Transaction == "rollback" ? "rolled back" : "committed")} when the session ends)", "console");
+            }
+
             // Kör batcharna i ordning på samma connection (SESSION_CONTEXT följer med).
-            // I modulläge binds funktions-/procedurparametrarna som riktiga
-            // query-parametrar - inga literaler, ingen quoting.
             for (var i = 0; i < _script.Batches.Count; i++)
             {
                 _currentBatch = i;
@@ -87,24 +108,46 @@ public class DebugSessionRunner
             }
 
             await ReportResultVariablesAsync(execConn);
+            await FinishTransactionAsync(execConn, commit: _options.Transaction == "commit");
             await EmitAsync("terminated", "null");
         }
         catch (Exception ex) when (_cts.IsCancellationRequested || IsAbort(ex))
         {
+            await FinishTransactionAsync(execConn, commit: false);
             await EmitAsync("terminated", "null");
         }
         catch (SqlException ex)
         {
             await StopOnExceptionAsync(ex);
+            await FinishTransactionAsync(execConn, commit: false);
+            await EmitAsync("terminated", "null");
         }
         catch (Exception ex)
         {
+            await FinishTransactionAsync(execConn, commit: false);
             await EmitAsync("error", JsonSerializer.Serialize(ex.Message));
         }
         finally
         {
+            if (execConn is not null) await execConn.DisposeAsync();
             await CleanupAsync();
             _events.Writer.TryComplete();
+        }
+    }
+
+    private async Task FinishTransactionAsync(SqlConnection? conn, bool commit)
+    {
+        if (conn is null || _options.Transaction is not ("rollback" or "commit")) return;
+        try
+        {
+            if (conn.State != ConnectionState.Open) return;
+            var sql = commit ? "IF @@TRANCOUNT > 0 COMMIT TRANSACTION" : "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION";
+            await conn.ExecuteAsync(sql);
+            EmitOutput(commit ? "-- transaction committed" : "-- transaction rolled back", "console");
+        }
+        catch (Exception ex)
+        {
+            EmitOutput($"-- could not finish transaction: {ex.Message}", "stderr");
         }
     }
 
@@ -132,31 +175,44 @@ public class DebugSessionRunner
         var columns = Enumerable.Range(0, reader.FieldCount)
             .Select(i => string.IsNullOrEmpty(reader.GetName(i)) ? $"(col{i + 1})" : reader.GetName(i))
             .ToArray();
-        var rows = new List<string[]>();
+        var rows = new List<string?[]>();
         var total = 0;
 
         while (await reader.ReadAsync(_cts.Token))
         {
             total++;
-            if (rows.Count >= MaxResultRows) continue; // töm resten men visa inte
-            var row = new string[columns.Length];
+            if (rows.Count >= MaxStoredRows) continue; // töm resten men spara inte
+            var row = new string?[columns.Length];
             for (var i = 0; i < columns.Length; i++)
-                row[i] = reader.IsDBNull(i) ? "NULL" : Truncate(Convert.ToString(reader.GetValue(i)) ?? "");
+                row[i] = reader.IsDBNull(i) ? null : FormatCell(reader.GetValue(i));
             rows.Add(row);
         }
 
+        // Fullständig (cappad) resultatmängd till klienten för "Open result set"
+        await EmitAsync("resultset", JsonSerializer.Serialize(new { columns, rows, total }));
+
+        // Kompakt texttabell i Debug Console
+        var shown = rows.Take(MaxConsoleRows).Select(r => r.Select(c => Truncate(c ?? "NULL")).ToArray()).ToList();
         var widths = columns.Select((c, i) =>
-            Math.Max(c.Length, rows.Count == 0 ? 0 : rows.Max(r => r[i].Length))).ToArray();
+            Math.Max(c.Length, shown.Count == 0 ? 0 : shown.Max(r => r[i].Length))).ToArray();
         var sb = new StringBuilder();
         sb.AppendLine(string.Join("  ", columns.Select((c, i) => c.PadRight(widths[i]))));
         sb.AppendLine(string.Join("  ", widths.Select(w => new string('-', w))));
-        foreach (var row in rows)
+        foreach (var row in shown)
             sb.AppendLine(string.Join("  ", row.Select((c, i) => c.PadRight(widths[i]))));
-        sb.AppendLine(total > rows.Count
-            ? $"({total} rader, visar de första {rows.Count})"
-            : $"({total} rader)");
+        sb.AppendLine(total > shown.Count
+            ? $"({total} rows, showing the first {shown.Count} - use 'sqldbgr: Open last result set' for all)"
+            : $"({total} rows)");
         EmitOutput(sb.ToString(), "stdout");
     }
+
+    private static string FormatCell(object value) => value switch
+    {
+        DateTime d => d.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+        DateTimeOffset d => d.ToString("yyyy-MM-dd HH:mm:ss.fff zzz"),
+        byte[] b => "0x" + Convert.ToHexString(b),
+        _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? ""
+    };
 
     private static string Truncate(string s)
     {
@@ -170,14 +226,14 @@ public class DebugSessionRunner
     {
         if (_script.ResultVariables.Count == 0) return;
         var locals = await conn.QueryAsync<LocalVar>(
-            "SELECT Name, TypeName, Value FROM __dbg.Locals WHERE SessionId = @sid AND Name IN @names",
+            $"SELECT Name, TypeName, Value FROM {_dbg}.Locals WITH (NOLOCK) WHERE SessionId = @sid AND Name IN @names",
             new { sid = SessionId, names = _script.ResultVariables });
         var byName = locals.ToDictionary(l => l.Name);
 
-        var sb = new StringBuilder("-- Resultat:\n");
+        var sb = new StringBuilder("-- Result:\n");
         foreach (var name in _script.ResultVariables)
         {
-            var label = name == "@__dbg_return" ? "returvärde" : name;
+            var label = name == "@__dbg_return" ? "return value" : name;
             var value = byName.TryGetValue(name, out var l) ? l.Value ?? "NULL" : "?";
             sb.AppendLine($"   {label} = {value}");
         }
@@ -192,7 +248,7 @@ public class DebugSessionRunner
         var line = _currentBatch >= 0 ? _script.Batches[_currentBatch].MapLine(ex.LineNumber) : 0;
         var span = FindSpanForLine(line)
             ?? (_lastPausedStmt is int last ? _script.StmtToSpan.GetValueOrDefault(last) : null);
-        var message = $"Fel {ex.Number} (rad {(span?.Line ?? line)}): {ex.Message}";
+        var message = $"Error {ex.Number} (line {(span?.Line ?? line)}): {ex.Message}";
 
         EmitOutput(message, "stderr");
         _faulted = true;
@@ -205,7 +261,6 @@ public class DebugSessionRunner
 
         using var reg = _cts.Token.Register(() => _resumeAfterFault.TrySetResult());
         await _resumeAfterFault.Task;
-        await EmitAsync("terminated", "null");
     }
 
     private StatementSpan? FindSpanForLine(int line)
@@ -227,27 +282,29 @@ public class DebugSessionRunner
         endColumn = span?.EndColumn
     };
 
-    public async Task SetBreakpointsAsync(int[] stmtIds)
+    public async Task SetBreakpointsAsync(IEnumerable<BreakpointSpec> specs)
     {
-        _breakpoints = stmtIds;
+        _breakpoints = specs.ToDictionary(b => b.StmtId);
         if (!_started) return; // skrivs in när Control-raden skapas vid start
         await using var conn = new SqlConnection(_connectionString);
         await conn.ExecuteAsync(
-            "UPDATE __dbg.Control SET ActiveBreakpoints = @bp WHERE SessionId = @sid",
+            $"UPDATE {_dbg}.Control SET ActiveBreakpoints = @bp WHERE SessionId = @sid",
             new { bp = EffectiveBreakpointsJson(), sid = SessionId });
     }
 
     // I modulläge stannar vi alltid på slutläget (RETURN/slut på kroppen) så
     // returvärdet och OUTPUT-parametrarna går att se även utan breakpoints.
     private string EffectiveBreakpointsJson() => JsonSerializer.Serialize(
-        _mode == "module" ? _breakpoints.Concat(_script.FinalStmtIds).Distinct() : _breakpoints);
+        _options.Mode == "module"
+            ? _breakpoints.Keys.Concat(_script.FinalStmtIds).Distinct()
+            : _breakpoints.Keys);
 
     public async Task SignalAsync(string command)
     {
         if (_faulted) { _resumeAfterFault.TrySetResult(); return; }
         await using var conn = new SqlConnection(_connectionString);
         await conn.ExecuteAsync(
-            "UPDATE __dbg.Control SET Command = @cmd, Signaled = 1 WHERE SessionId = @sid",
+            $"UPDATE {_dbg}.Control SET Command = @cmd, SignalSeq = SignalSeq + 1 WHERE SessionId = @sid",
             new { cmd = command, sid = SessionId });
     }
 
@@ -261,13 +318,26 @@ public class DebugSessionRunner
         _cts.Cancel();
     }
 
+    /// <summary>Locals läses med NOLOCK: batchen skriver dem inne i en ev. transaktion.</summary>
     public async Task<List<LocalVar>> GetLocalsAsync()
     {
         await using var conn = new SqlConnection(_connectionString);
         var rows = await conn.QueryAsync<LocalVar>(
-            "SELECT Name, TypeName, Value FROM __dbg.Locals WHERE SessionId = @sid ORDER BY Name",
+            $"SELECT Name, TypeName, Value FROM {_dbg}.Locals WITH (NOLOCK) WHERE SessionId = @sid ORDER BY Ordinal, Name",
             new { sid = SessionId });
         return rows.ToList();
+    }
+
+    /// <summary>setVariable: värdet läses in av batchen efter nästa resume.
+    /// Locals uppdateras direkt så panelen speglar ändringen.</summary>
+    public async Task SetVariableAsync(string name, string? value)
+    {
+        await using var conn = new SqlConnection(_connectionString);
+        await conn.ExecuteAsync($"""
+            DELETE FROM {_dbg}.Overrides WHERE SessionId = @sid AND Name = @name;
+            INSERT INTO {_dbg}.Overrides (SessionId, Name, Value) VALUES (@sid, @name, @value);
+            UPDATE {_dbg}.Locals SET Value = @value WHERE SessionId = @sid AND Name = @name;
+            """, new { sid = SessionId, name, value });
     }
 
     private async Task MonitorPauseStateAsync()
@@ -276,12 +346,24 @@ public class DebugSessionRunner
         {
             await using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync(_cts.Token);
+            var lastHeartbeat = DateTime.UtcNow;
 
             while (!_cts.IsCancellationRequested)
             {
-                var state = await conn.QuerySingleOrDefaultAsync<(int? PausedAtStmt, string? Command, int PauseSeq)>(
-                    "SELECT PausedAtStmt, Command, PauseSeq FROM __dbg.Control WHERE SessionId = @sid",
-                    new { sid = SessionId });
+                if (DateTime.UtcNow - lastHeartbeat > HeartbeatInterval)
+                {
+                    await conn.ExecuteAsync(
+                        $"UPDATE {_dbg}.Control SET LastHeartbeatUtc = SYSUTCDATETIME() WHERE SessionId = @sid",
+                        new { sid = SessionId });
+                    lastHeartbeat = DateTime.UtcNow;
+                }
+
+                var state = await conn.QuerySingleOrDefaultAsync<(int? PausedAtStmt, int PauseSeq, string? Command)>($"""
+                    SELECT p.PausedAtStmt, p.PauseSeq, c.Command
+                    FROM {_dbg}.PauseState p WITH (NOLOCK)
+                    JOIN {_dbg}.Control c WITH (NOLOCK) ON c.SessionId = p.SessionId
+                    WHERE p.SessionId = @sid
+                    """, new { sid = SessionId });
 
                 // PauseSeq (inte statement-id) avgör om det är en NY paus: en loop
                 // pausar på samma id varje varv, snabbare än pollintervallet.
@@ -289,7 +371,14 @@ public class DebugSessionRunner
                 {
                     _lastPauseSeq = state.PauseSeq;
                     _lastPausedStmt = stmt;
-                    var span = _script.StmtToSpan.GetValueOrDefault(stmt);
+
+                    var isBreakpointHit = state.Command is "continue";
+                    if (isBreakpointHit && !await ShouldStopAtBreakpointAsync(stmt))
+                    {
+                        await SignalAsync("continue");
+                        continue;
+                    }
+
                     var reason = state.Command switch
                     {
                         "entry" => "entry",
@@ -300,7 +389,7 @@ public class DebugSessionRunner
                     {
                         reason,
                         text = (string?)null,
-                        stack = new[] { StackFrame(span, 1) }
+                        stack = new[] { StackFrame(_script.StmtToSpan.GetValueOrDefault(stmt), 1) }
                     }));
                 }
 
@@ -310,12 +399,102 @@ public class DebugSessionRunner
         catch (OperationCanceledException) { /* sessionen stoppad */ }
         catch (Exception ex)
         {
-            EmitOutput($"[sidecar] övervakningen avbröts: {ex.Message}", "stderr");
+            EmitOutput($"[sidecar] monitor stopped: {ex.Message}", "stderr");
         }
     }
 
-    private async Task EnsureDebugSchemaAsync(SqlConnection conn)
+    /// <summary>Villkor, träffräkning och logpoints utvärderas här mot de fångade
+    /// locals (skalärer deklareras med sina typer på en egen connection).
+    /// Villkor som inte går att utvärdera räknas som sanna och rapporteras.</summary>
+    private async Task<bool> ShouldStopAtBreakpointAsync(int stmtId)
     {
+        if (!_breakpoints.TryGetValue(stmtId, out var bp)) return true;
+        if (bp.Condition is null && bp.HitCondition is null && bp.LogMessage is null) return true;
+
+        if (bp.Condition is not null)
+        {
+            var result = await EvaluateAsync($"CASE WHEN ({bp.Condition}) THEN 1 ELSE 0 END", stmtId);
+            if (result.error is not null)
+                EmitOutput($"[breakpoint] condition '{bp.Condition}' could not be evaluated: {result.error}", "stderr");
+            else if (result.value != "1")
+                return false;
+        }
+
+        if (bp.HitCondition is not null)
+        {
+            var hits = _hitCounts.GetValueOrDefault(stmtId) + 1;
+            _hitCounts[stmtId] = hits;
+            if (!HitConditionMet(bp.HitCondition, hits)) return false;
+        }
+
+        if (bp.LogMessage is not null)
+        {
+            var parts = Regex.Split(bp.LogMessage, @"\{([^}]+)\}");
+            var expr = "CONCAT(" + string.Join(", ", parts.Select((p, i) => i % 2 == 0
+                ? $"N'{p.Replace("'", "''")}'"
+                : $"CAST(({p}) AS NVARCHAR(MAX))")) + ")";
+            var result = await EvaluateAsync(expr, stmtId);
+            EmitOutput(result.error is null ? result.value ?? "" : $"[logpoint] {bp.LogMessage}: {result.error}", result.error is null ? "console" : "stderr");
+            return false; // logpoints stannar inte
+        }
+        return true;
+    }
+
+    private static bool HitConditionMet(string condition, int hits)
+    {
+        var m = Regex.Match(condition.Trim(), @"^(==|=|>=|>|<=|<|%)?\s*(\d+)$");
+        if (!m.Success) return true;
+        var n = int.Parse(m.Groups[2].Value);
+        return m.Groups[1].Value switch
+        {
+            ">" => hits > n,
+            ">=" => hits >= n,
+            "<" => hits < n,
+            "<=" => hits <= n,
+            "%" => n > 0 && hits % n == 0,
+            _ => hits == n
+        };
+    }
+
+    /// <summary>Utvärderar ett T-SQL-uttryck med de fångade skalära locals som
+    /// deklarerade variabler (används för villkor, logpoints och hover/watch).</summary>
+    public async Task<(string? value, string? error)> EvaluateAsync(string expression, int? stmtId = null)
+    {
+        var locals = await GetLocalsAsync();
+        var types = stmtId is int id && _script.ScopeMap.TryGetValue(id, out var scope)
+            ? scope.Where(v => !v.IsTable).ToDictionary(v => v.Name, v => v.TypeName)
+            : locals.Where(l => !l.TypeName.StartsWith("TABLE")).ToDictionary(l => l.Name, l => l.TypeName);
+
+        var sb = new StringBuilder("SET DATEFORMAT ymd;\n");
+        foreach (var l in locals.Where(l => !l.TypeName.StartsWith("TABLE") && types.ContainsKey(l.Name)))
+        {
+            var type = types[l.Name];
+            var t = type.ToLowerInvariant();
+            var literal = l.Value is null ? "NULL" : $"N'{l.Value.Replace("'", "''")}'";
+            var init = l.Value is not null && (t.StartsWith("binary") || t.StartsWith("varbinary"))
+                ? $"CONVERT({type}, {literal}, 1)" : literal;
+            sb.AppendLine($"DECLARE {l.Name} {type} = {init};");
+        }
+        sb.AppendLine($"SELECT CAST(({expression}) AS NVARCHAR(MAX));");
+
+        try
+        {
+            await using var conn = new SqlConnection(_connectionString);
+            var value = await conn.ExecuteScalarAsync<string?>(sb.ToString());
+            return (value, null);
+        }
+        catch (SqlException ex)
+        {
+            return (null, ex.Message);
+        }
+    }
+
+    private async Task EnsureDebugSchemaAsync()
+    {
+        var builder = new SqlConnectionStringBuilder(_connectionString) { InitialCatalog = _options.DebugDatabase };
+        await using var conn = new SqlConnection(builder.ConnectionString);
+        await conn.OpenAsync(_cts.Token);
+
         var schemaSql = await File.ReadAllTextAsync(
             Path.Combine(AppContext.BaseDirectory, "Db", "DebugSchema.sql"), _cts.Token);
         foreach (var batch in schemaSql.Split("\nGO", StringSplitOptions.RemoveEmptyEntries))
@@ -324,6 +503,16 @@ public class DebugSessionRunner
             if (trimmed.Length > 0)
                 await conn.ExecuteAsync(trimmed);
         }
+
+        // Föräldralösa sessioner (sidecar som dött): heartbeaten har tystnat.
+        await conn.ExecuteAsync("""
+            DECLARE @dead TABLE (SessionId UNIQUEIDENTIFIER);
+            INSERT INTO @dead SELECT SessionId FROM __dbg.Control WHERE LastHeartbeatUtc < DATEADD(MINUTE, -2, SYSUTCDATETIME());
+            DELETE FROM __dbg.Locals WHERE SessionId IN (SELECT SessionId FROM @dead);
+            DELETE FROM __dbg.Overrides WHERE SessionId IN (SELECT SessionId FROM @dead);
+            DELETE FROM __dbg.PauseState WHERE SessionId IN (SELECT SessionId FROM @dead);
+            DELETE FROM __dbg.Control WHERE SessionId IN (SELECT SessionId FROM @dead);
+            """);
     }
 
     private async Task CleanupAsync()
@@ -331,15 +520,18 @@ public class DebugSessionRunner
         try
         {
             await using var conn = new SqlConnection(_connectionString);
-            await conn.ExecuteAsync(
-                "DELETE FROM __dbg.Control WHERE SessionId = @sid; DELETE FROM __dbg.Locals WHERE SessionId = @sid;",
-                new { sid = SessionId });
+            await conn.ExecuteAsync($"""
+                DELETE FROM {_dbg}.Control WHERE SessionId = @sid;
+                DELETE FROM {_dbg}.PauseState WHERE SessionId = @sid;
+                DELETE FROM {_dbg}.Locals WHERE SessionId = @sid;
+                DELETE FROM {_dbg}.Overrides WHERE SessionId = @sid;
+                """, new { sid = SessionId });
         }
         catch { /* best effort */ }
     }
 
     private static bool IsAbort(Exception ex)
-        => ex is SqlException sql && sql.Errors.Cast<SqlError>().Any(e => e.Number == AbortErrorNumber);
+        => ex is SqlException sql && sql.Errors.Cast<SqlError>().Any(e => e.Number is AbortErrorNumber or HeartbeatLostErrorNumber);
 
     // Värden från extensionen kommer som JsonElement via System.Text.Json.
     private static object? NormalizeParamValue(object? value) => value is JsonElement je

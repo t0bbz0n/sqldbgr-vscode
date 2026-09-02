@@ -22,10 +22,14 @@ public sealed class DebugRun
         Script = script;
     }
 
+    public record Bp(int Line, string? Condition = null, string? HitCondition = null, string? LogMessage = null);
+
     public static async Task<DebugRun> StartAsync(
         string connectionString, string sql, int[] breakpointLines,
         bool stopOnEntry = false, string mode = "invoke",
-        Dictionary<string, object?>? parameters = null)
+        Dictionary<string, object?>? parameters = null,
+        string transaction = "none",
+        IReadOnlyList<Bp>? breakpoints = null)
     {
         var database = new SqlConnectionStringBuilder(connectionString).InitialCatalog;
         var debugSchema = $"[{database}].__dbg";
@@ -35,8 +39,12 @@ public sealed class DebugRun
             : analyzer.Instrument(sql, "/test.sql", debugSchema);
         Assert.True(script.Errors.Count == 0, string.Join("; ", script.Errors));
 
-        var runner = new DebugSessionRunner(connectionString, script, mode, parameters ?? []);
-        await runner.SetBreakpointsAsync(breakpointLines.Select(l => script.LineMap[l]).ToArray());
+        var options = new DebugSessionOptions(mode, transaction, database);
+        var runner = new DebugSessionRunner(connectionString, script, options, parameters ?? []);
+        var specs = breakpoints is not null
+            ? breakpoints.Select(b => new BreakpointSpec(script.LineMap[b.Line], b.Condition, b.HitCondition, b.LogMessage))
+            : breakpointLines.Select(l => new BreakpointSpec(script.LineMap[l], null, null, null));
+        await runner.SetBreakpointsAsync(specs);
         Assert.True(runner.TryStart(stopOnEntry));
         return new DebugRun(runner, script);
     }

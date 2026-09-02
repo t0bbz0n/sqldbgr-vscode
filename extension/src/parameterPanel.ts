@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { ModuleInfo } from './sidecarClient';
 
+const t = vscode.l10n.t;
+
 type ParamValues = Record<string, string | null>;
 
 /**
@@ -21,7 +23,7 @@ export function collectParameters(
 
   const panel = vscode.window.createWebviewPanel(
     'sqldbgrParameterPanel',
-    `Parametrar: ${module.name}`,
+    t('Parameters: {0}', module.name),
     vscode.ViewColumn.Active,
     { enableScripts: true, localResourceRoots: [] }
   );
@@ -88,7 +90,14 @@ function renderHtml(
   values: Map<string, { value: string; isNull: boolean }>
 ): string {
   const nonce = getNonce();
-  const kindLabel = module.kind === 'function' ? 'Funktion' : 'Procedur';
+  const kindLabel = module.kind === 'function' ? t('Function') : t('Procedure');
+  const labels = {
+    parameters: t('{0} parameters', module.parameters.length),
+    defaultPrefix: t('default:'),
+    start: t('Start debugging'),
+    cancel: t('Cancel'),
+    hint: t('Enter starts · dates are safest as ISO (2024-01-31)')
+  };
 
   const rows = module.parameters.map((p, i) => {
     const v = values.get(p.name) ?? { value: '', isNull: false };
@@ -101,13 +110,13 @@ function renderHtml(
         <div class="null-row">
           <input type="checkbox" id="n${i}" data-for="p${i}" ${v.isNull ? 'checked' : ''} />
           <label for="n${i}">NULL</label>
-          ${p.defaultValue !== null ? `<span class="default">default: ${escapeHtml(p.defaultValue)}</span>` : ''}
+          ${p.defaultValue !== null ? `<span class="default">${escapeHtml(labels.defaultPrefix)} ${escapeHtml(p.defaultValue)}</span>` : ''}
         </div>
       </div>`;
   }).join('');
 
   return `<!DOCTYPE html>
-<html lang="sv">
+<html>
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
@@ -155,15 +164,15 @@ function renderHtml(
 </head>
 <body>
   <h2>${escapeHtml(module.name)}</h2>
-  <div class="subtitle">${kindLabel} · ${module.parameters.length} parametrar</div>
+  <div class="subtitle">${escapeHtml(kindLabel)} · ${escapeHtml(labels.parameters)}</div>
   <form id="form">
     ${rows}
     <div class="buttons">
-      <button type="submit">Starta debug</button>
-      <button type="button" class="secondary" id="cancel">Avbryt</button>
+      <button type="submit">${escapeHtml(labels.start)}</button>
+      <button type="button" class="secondary" id="cancel">${escapeHtml(labels.cancel)}</button>
     </div>
   </form>
-  <div class="hint">Enter startar · datum anges säkrast som ISO (2024-01-31)</div>
+  <div class="hint">${escapeHtml(labels.hint)}</div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 

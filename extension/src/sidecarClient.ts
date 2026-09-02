@@ -6,12 +6,15 @@ export interface StartSessionRequest {
   connectionString: string;
   mode: 'invoke' | 'module' | 'attach';
   params: Record<string, unknown>;
+  transaction?: 'none' | 'rollback' | 'commit';
+  debugDatabase?: string;
 }
 
 export interface ModuleParameter {
   name: string;
   typeName: string;
   defaultValue: string | null;
+  isOutput: boolean;
 }
 
 export interface ModuleInfo {
@@ -22,10 +25,28 @@ export interface ModuleInfo {
   reason: string | null;
 }
 
+export interface ParseIssue { line: number; column: number; message: string; }
+
+/** Statement-spans från sidecaren: breakpoints inuti ett flerradigt statement träffar det. */
+export interface StatementSpan { stmtId: number; line: number; endLine: number; }
+
+export interface InspectResult {
+  module: ModuleInfo | null;
+  parseErrors: ParseIssue[];
+  statements: StatementSpan[];
+}
+
 export interface ParseResult {
   sessionId: string;
-  // rad (1-baserad) -> statementId, per källa
   lineMap: Array<{ line: number; stmtId: number }>;
+  statements: StatementSpan[];
+}
+
+export interface BreakpointSpec {
+  stmtId: number;
+  condition: string | null;
+  hitCondition: string | null;
+  logMessage: string | null;
 }
 
 export interface LocalVar {
@@ -51,8 +72,14 @@ export interface PausedEvent {
 }
 
 export interface OutputEvent {
-  category: 'stdout' | 'stderr';
+  category: 'stdout' | 'stderr' | 'console';
   text: string;
+}
+
+export interface ResultSetEvent {
+  columns: string[];
+  rows: Array<Array<string | null>>;
+  total: number;
 }
 
 export interface HealthInfo {
@@ -63,16 +90,17 @@ export interface HealthInfo {
 
 /**
  * Pratar med sidecaren över HTTP + Server-Sent Events.
- * Events: 'paused' (PausedEvent), 'output' (OutputEvent), 'terminated', 'error' (string)
+ * Events: 'paused' (PausedEvent), 'output' (OutputEvent), 'resultset' (ResultSetEvent),
+ * 'terminated', 'error' (string)
  */
 export class SidecarClient extends EventEmitter {
   private sessionId: string | null = null;
   private sseRequest: http.ClientRequest | null = null;
 
-  constructor(private baseUrl: string) { super(); }
+  constructor(private baseUrl: string, private token?: string) { super(); }
 
-  /** Sessionslös: hittar en ev. funktions-/procedurdefinition i filen. */
-  async inspect(programPath: string): Promise<{ module: ModuleInfo | null }> {
+  /** Sessionslös: modulinfo, parse-fel och statement-spans för filen. */
+  async inspect(programPath: string): Promise<InspectResult> {
     return this.post('/inspect', { programPath });
   }
 
@@ -99,9 +127,9 @@ export class SidecarClient extends EventEmitter {
     await this.post('/shutdown', {});
   }
 
-  async setBreakpoints(stmtIds: number[]): Promise<void> {
+  async setBreakpoints(breakpoints: BreakpointSpec[]): Promise<void> {
     if (!this.sessionId) return;
-    await this.post(`/session/${this.sessionId}/breakpoints`, { stmtIds });
+    await this.post(`/session/${this.sessionId}/breakpoints`, { breakpoints });
   }
 
   async signal(command: 'continue' | 'stepOver' | 'stepIn'): Promise<void> {
@@ -114,6 +142,16 @@ export class SidecarClient extends EventEmitter {
     return this.get<LocalVar[]>(`/session/${this.sessionId}/locals`);
   }
 
+  async setVariable(name: string, value: string | null): Promise<void> {
+    if (!this.sessionId) return;
+    await this.post(`/session/${this.sessionId}/variables`, { name, value });
+  }
+
+  async evaluate(expression: string): Promise<{ value: string | null; error: string | null }> {
+    if (!this.sessionId) return { value: null, error: 'no session' };
+    return this.post(`/session/${this.sessionId}/evaluate`, { expression });
+  }
+
   async stopSession(): Promise<void> {
     if (!this.sessionId) return;
     this.sseRequest?.destroy();
@@ -123,7 +161,7 @@ export class SidecarClient extends EventEmitter {
 
   private openEventStream(sessionId: string): void {
     const url = new URL(`/session/${sessionId}/events`, this.baseUrl);
-    this.sseRequest = http.get(url, res => {
+    this.sseRequest = http.get(url, { headers: this.authHeaders() }, res => {
       let buffer = '';
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => {
@@ -151,9 +189,14 @@ export class SidecarClient extends EventEmitter {
     switch (event) {
       case 'paused': this.emit('paused', JSON.parse(data) as PausedEvent); break;
       case 'output': this.emit('output', JSON.parse(data) as OutputEvent); break;
+      case 'resultset': this.emit('resultset', JSON.parse(data) as ResultSetEvent); break;
       case 'terminated': this.emit('terminated'); break;
       case 'error': this.emit('error', JSON.parse(data) as string); break;
     }
+  }
+
+  private authHeaders(): Record<string, string> {
+    return this.token ? { Authorization: `Bearer ${this.token}` } : {};
   }
 
   private post<T = unknown>(path: string, body: unknown): Promise<T> {
@@ -170,9 +213,10 @@ export class SidecarClient extends EventEmitter {
       const payload = body === undefined ? undefined : JSON.stringify(body);
       const req = http.request(url, {
         method,
-        headers: payload
-          ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-          : {}
+        headers: {
+          ...this.authHeaders(),
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {})
+        }
       }, res => {
         let data = '';
         res.setEncoding('utf8');

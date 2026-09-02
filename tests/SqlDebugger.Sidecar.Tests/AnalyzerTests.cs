@@ -173,10 +173,41 @@ public class AnalyzerTests
     }
 
     [Fact]
+    public void TempTables_AreCapturedBehindObjectIdGuard()
+    {
+        var r = _analyzer.Instrument("CREATE TABLE #t (a INT);\nSELECT 1 AS x INTO #s;\nSELECT 2;", "/t.sql");
+        var text = r.Batches[0].Sql;
+        Assert.Contains("IF OBJECT_ID('tempdb..#t') IS NOT NULL", text);
+        Assert.Contains("IF OBJECT_ID('tempdb..#s') IS NOT NULL", text);
+        Assert.Contains("EXEC sp_executesql", text);
+        AssertReparses(text);
+        Assert.Equal(["#t", "#s"], r.ScopeMap[r.LineMap[3]].Select(v => v.Name));
+    }
+
+    [Fact]
+    public void Overrides_AreAppliedAfterPause()
+    {
+        var r = _analyzer.Instrument("DECLARE @x INT = 1;\nSELECT @x;", "/t.sql", "[Db].__dbg");
+        var text = r.Batches[0].Sql;
+        Assert.Contains("SELECT @x = TRY_CONVERT(INT, Value) FROM [Db].__dbg.Overrides", text);
+        Assert.True(text.IndexOf("Overrides") > text.IndexOf("Pause @stmt_id = 1"), "overrides läses efter Pause");
+        AssertReparses(text);
+    }
+
+    [Fact]
+    public void ParseErrors_HavePositions()
+    {
+        var errors = _analyzer.GetParseErrors("SELECT 1;\nSELECT FROM WHERE;");
+        Assert.NotEmpty(errors);
+        Assert.Equal(2, errors[0].Line);
+        Assert.True(errors[0].Column > 0);
+    }
+
+    [Fact]
     public void ParseErrors_AreReportedWithLine()
     {
         var r = _analyzer.Instrument("SELECT FROM WHERE;", "/t.sql");
         Assert.NotEmpty(r.Errors);
-        Assert.StartsWith("Rad 1:", r.Errors[0]);
+        Assert.StartsWith("Line 1:", r.Errors[0]);
     }
 }

@@ -122,39 +122,37 @@ För Marketplace-publicering: skapa en publisher på
 marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 (står som `your-publisher-id`), och kör `npx @vscode/vsce publish`.
 
+## Funktioner i korthet
+
+- Breakpoints (även villkorliga, med träffräkning och logpoints), stegning,
+  Pause, Restart utan omfrågning
+- Locals: skalärer, tabellvariabler och temp-tabeller som expanderbara träd;
+  hover och Watch; ändra variabelvärden under paus (`setVariable`)
+- Modulläge: F5 på `CREATE PROCEDURE/FUNCTION` debuggar kroppen med
+  parameterpanel; returvärde/OUTPUT rapporteras; CodeLens ovanför definitionen
+- Transaktionsläge `transaction: rollback|commit` ("dry run")
+- `PRINT`, resultatmängder och SQL-fel i Debug Console; kommandot *Open last
+  result set* visar resultat i full bredd; parse-fel i Problems-panelen
+- Anslutning via mssql-extensionens profiler eller inputruta, sparad säkert i
+  SecretStorage; `debugDatabase` för miljöer utan DDL-rätt
+- Sidecaren buntad i VSIX:en, egen per fönster på slumpport, token-autentiserad;
+  .NET-runtime hämtas automatiskt
+- UI på engelska med svensk översättning (`l10n/`)
+
 ## Status / roadmap
 
-Detaljerad plan framåt med prioriteringar: se [ROADMAP.md](ROADMAP.md).
-
-- [x] DAP-skelett: launch, breakpoints, continue/step, locals, SSE-events
-- [x] ScriptDom-instrumentering, rekursivt ner i `BEGIN/END`, `IF`/`ELSE`,
-      `WHILE` och `TRY/CATCH` (grenar utan `BEGIN/END` wrappas i syntetiska block)
-- [x] `__dbg`-schema med pause/control-mekanism
-- [x] Verklig source-mappning i paused-events (rad/kolumn + slutposition,
-      exakt statement highlightas i editorn)
-- [x] Locals: TABLE-variabler som expanderbart träd (variablesReference)
-- [x] Modulläge: F5 på ett `CREATE FUNCTION`/`PROCEDURE`-script debuggar
-      kroppen som script - parametervärden matas in vid start, `RETURN`
-      fångas i `@__dbg_return` (syns i Locals)
-- [x] Parameterpanel: webview-formulär med alla parametrar, typinfo,
-      NULL-kryss, deklarerade defaults och minne av senast använda värden
-- [ ] Step-into i stored procedures (inline-expansion, virtuella source-filer)
-- [ ] Conditional breakpoints
-- [ ] Deploy/backup/restore av procs från fil (remote-förberedelse)
-- [ ] Attach-läge + licens (betald del, separat repo)
+Detaljerad plan: se [ROADMAP.md](ROADMAP.md). Kvar: step-into i stored
+procedures, attach-läge (betaldel), extension-tester med `@vscode/test-electron`.
 
 ## Kända begränsningar just nu
 
-- Modul-definitioner (`CREATE PROCEDURE`/`FUNCTION`/`VIEW`/`TRIGGER`)
-  som körs som script instrumenteras inte - använd modulläget (F5 på
-  filen -> "Debugga funktionen/proceduren") för att debugga kroppen.
-  Att pausa i den *deployade* modulen går inte: scalar-funktioner
-  tillåter inga sidoeffekter, och step-into i procs är roadmap.
-- Modulläget kör kroppen som en batch: `RETURN` mitt i skrivs om och
-  avslutar batchen, men beteendeskillnader kan finnas (t.ex. refererar
-  kroppen sig själv rekursivt krävs att modulen redan är deployad).
-- Modulparametrar anges som text och konverteras av SQL Server till
-  signaturens typ; datum anges som ISO (`2024-01-31`).
+- Pausa inne i en *deployad* modul går inte utan attach-läge; använd
+  modulläget (F5 på filen) för att debugga kroppen. Scalar-funktioner kan
+  aldrig pausas (UDF:er tillåter inga sidoeffekter).
+- Modulläget kör kroppen som en batch: `RETURN` skrivs om och avslutar
+  batchen. Refererar kroppen sig själv rekursivt måste modulen redan finnas.
+- sqlcmd-läge (`:r`, `:setvar`, `GO n`) stöds inte. "(n rows affected)"
+  visas inte (räknarna förorenas av instrumenteringens egna INSERT/DELETE).
 
 ## Licens
 

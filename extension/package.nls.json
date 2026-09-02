@@ -1,0 +1,21 @@
+{
+  "config.connectionString": "SQL Server connection string used when the launch configuration has none. Leave empty to be asked at start (the answer can be stored securely in SecretStorage).",
+  "config.moduleFiles": "What F5 does on a file that defines a procedure/function: ask, debug the body with parameters, or run the script as is.",
+  "command.debugCurrentFile": "Debug current file",
+  "command.debugModule": "Debug procedure/function with parameters",
+  "command.openLastResults": "Open last result set",
+  "command.forgetConnection": "Forget saved connection string",
+  "launch.program": "Path to the .sql file to debug.",
+  "launch.connectionString": "SQL Server connection string.",
+  "launch.mode": "invoke = run the script, module = debug the body of the file's CREATE FUNCTION/PROCEDURE with parameter values, attach = wait for marked traffic (requires a license for remote).",
+  "launch.params": "Parameter values in module mode (name -> value, null for NULL). Missing parameters are asked for at start.",
+  "launch.stopOnEntry": "Stop on the first statement even without breakpoints.",
+  "launch.transaction": "Run the script inside a transaction: rollback = undo all changes when the session ends (dry run), commit = commit at the end, none = autocommit as usual.",
+  "launch.debugDatabase": "Database where the __dbg debug schema is created (default: the connection's database). Use when you lack DDL rights in the target database.",
+  "launch.sidecarUrl": "URL of a sidecar. Normally omitted: each VS Code window then starts its own sidecar on a random port. Set only if you run the sidecar yourself (e.g. http://localhost:5199).",
+  "launch.sidecarToken": "Bearer token for a self-started sidecar (its SQLDBGR_TOKEN). Omit for the automatically started sidecar.",
+  "launch.autoStartSidecar": "Start a sidecar automatically (bundled with the extension). Set false to only use sidecarUrl.",
+  "launch.sidecarCommand": "Command that starts the sidecar; --port is appended automatically. Default: the bundled sidecar. During development: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"].",
+  "snippet.local": "sqldbgr: debug a T-SQL script locally",
+  "snippet.dryrun": "sqldbgr: debug with rollback (dry run)"
+}

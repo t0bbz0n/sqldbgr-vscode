@@ -48,7 +48,10 @@ public record LineSegment(int OutStart, int OrigLine, bool Injected);
 /// <summary>1-baserade rad/kolumn-positioner för ett statement i originalfilen.</summary>
 public record StatementSpan(int Line, int Column, int EndLine, int EndColumn);
 
-public record DeclaredVariable(string Name, string TypeName, bool IsTable);
+public record DeclaredVariable(string Name, string TypeName, bool IsTable, bool IsTempTable = false);
+
+/// <summary>Parse-fel med position, för Problems-panelen i klienten.</summary>
+public record ParseIssue(int Line, int Column, string Message);
 
 public record ModuleParameter(string Name, string TypeName, string? DefaultValue, bool IsOutput);
 
@@ -59,7 +62,7 @@ public record ModuleInfo(
 
 public class ScriptDomAnalyzer
 {
-    private const string Header = "-- Instrumenterad av sqldbgr. Deployas ALDRIG permanent.";
+    private const string Header = "-- Instrumented by sqldbgr. NEVER deploy permanently.";
     private const string SidDeclaration =
         "DECLARE @__dbg_sid UNIQUEIDENTIFIER = CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'));";
 
@@ -67,6 +70,12 @@ public class ScriptDomAnalyzer
     /// om den med rätt typ: DECLARE @a INT = @__p_a.</summary>
     public static string BoundParameterName(string parameterName)
         => "@__p_" + parameterName.TrimStart('@');
+
+    public IReadOnlyList<ParseIssue> GetParseErrors(string sql)
+    {
+        new TSql160Parser(initialQuotedIdentifiers: true).Parse(new StringReader(sql), out var errors);
+        return errors.Select(e => new ParseIssue(e.Line, e.Column, e.Message)).ToList();
+    }
 
     /// <summary>Hittar första funktions-/procedurdefinitionen i scriptet, för
     /// extensionens "debugga kroppen?"-fråga och parameterinsamling.</summary>
@@ -85,7 +94,7 @@ public class ScriptDomAnalyzer
                         MapParameters(sql, fn.Parameters),
                         CanScriptify: fn.StatementList is not null,
                         Reason: fn.StatementList is null
-                            ? "Inline table-valued functions har ingen statementkropp att debugga."
+                            ? "Inline table-valued functions have no statement body to debug."
                             : null);
                 case ProcedureStatementBody proc:
                     return new ModuleInfo("procedure", FullName(proc.ProcedureReference.Name),
@@ -116,7 +125,7 @@ public class ScriptDomAnalyzer
             _ => null
         };
         if (module is null || statementList is null)
-            return Empty(sourcePath, ["Hittade ingen funktions-/procedurkropp att debugga."]);
+            return Empty(sourcePath, ["No function or procedure body found to debug."]);
 
         var prelude = new StringBuilder();
         prelude.AppendLine(Header);
@@ -158,7 +167,7 @@ public class ScriptDomAnalyzer
                 resultVariables.Add(tvf.DeclareTableVariableBody.VariableName.Value);
                 break;
             case FunctionStatementBody:
-                return Empty(sourcePath, ["Funktionens returtyp stöds inte i modulläge."]);
+                return Empty(sourcePath, ["The function's return type is not supported in module mode."]);
             default: // procedure
                 prelude.AppendLine("DECLARE @__dbg_return INT;");
                 declared.Add(new DeclaredVariable("@__dbg_return", "INT", IsTable: false));
@@ -244,9 +253,9 @@ public class ScriptDomAnalyzer
 
         script = fragment as TSqlScript;
         if (parseErrors.Count > 0)
-            return parseErrors.Select(e => $"Rad {e.Line}: {e.Message}").ToList();
+            return parseErrors.Select(e => $"Line {e.Line}: {e.Message}").ToList();
         if (script is null)
-            return ["Kunde inte tolka innehållet som ett T-SQL-script."];
+            return ["The file could not be parsed as a T-SQL script."];
         return null;
     }
 
@@ -373,6 +382,7 @@ public class ScriptDomAnalyzer
         text.AppendLine("BEGIN");
         text.Append(BuildTableCapture(ctx));
         text.AppendLine($"    EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
+        text.Append(BuildOverridesApply(ctx));
         text.AppendLine("END");
         return text.ToString();
     }
@@ -452,7 +462,25 @@ public class ScriptDomAnalyzer
             ctx.Declared.Add(new DeclaredVariable(
                 tableDecl.Body.VariableName.Value, "TABLE", IsTable: true));
         }
+        // Temp-tabeller fångas som tabellvariabler (guardade med OBJECT_ID vid
+        // capture, eftersom de till skillnad från variabler kanske inte finns).
+        else if (stmt is CreateTableStatement { SchemaObjectName.BaseIdentifier.Value: var tmp } && tmp.StartsWith('#'))
+        {
+            AddTempTable(ctx, tmp);
+        }
+        else if (stmt is SelectStatement { Into.BaseIdentifier.Value: var into } && into.StartsWith('#'))
+        {
+            AddTempTable(ctx, into);
+        }
     }
+
+    private static void AddTempTable(Context ctx, string name)
+    {
+        if (ctx.Declared.Any(v => v.Name == name)) return;
+        ctx.Declared.Add(new DeclaredVariable(name, "TABLE", IsTable: true, IsTempTable: true));
+    }
+
+    private const int TableCaptureRows = 100;
 
     /// <summary>Skalära variabler: en DELETE + en INSERT ... VALUES per statement.</summary>
     private static string BuildScalarCapture(Context ctx)
@@ -461,26 +489,62 @@ public class ScriptDomAnalyzer
         var sb = new StringBuilder();
         sb.AppendLine($"DELETE FROM {ctx.Dbg}.Locals WHERE SessionId = @__dbg_sid;");
 
-        var scalars = ctx.Declared.Where(v => !v.IsTable).ToList();
+        var scalars = ctx.Declared.Select((v, i) => (v, i)).Where(x => !x.v.IsTable).ToList();
         if (scalars.Count == 0) return sb.ToString();
 
-        sb.AppendLine($"INSERT INTO {ctx.Dbg}.Locals (SessionId, Name, TypeName, Value) VALUES");
-        sb.AppendLine(string.Join(",\n", scalars.Select(v =>
-            $"    (@__dbg_sid, '{v.Name}', '{v.TypeName.Replace("'", "''")}', {ValueExpression(v)})")) + ";");
+        sb.AppendLine($"INSERT INTO {ctx.Dbg}.Locals (SessionId, Ordinal, Name, TypeName, Value) VALUES");
+        sb.AppendLine(string.Join(",\n", scalars.Select(x =>
+            $"    (@__dbg_sid, {x.i}, '{x.v.Name}', '{x.v.TypeName.Replace("'", "''")}', {ValueExpression(x.v)})")) + ";");
         return sb.ToString();
     }
 
+    /// <summary>Tabellvariabler och temp-tabeller: de första raderna som JSON,
+    /// antal rader i typnamnet (TABLE(n)). Temp-tabeller via dynamisk SQL bakom en
+    /// OBJECT_ID-guard - en referens till en temp-tabell som inte finns skulle
+    /// annars fälla hela statementet vid kompilering.</summary>
     private static string BuildTableCapture(Context ctx)
     {
         var sb = new StringBuilder();
-        foreach (var v in ctx.Declared.Where(v => v.IsTable))
+        foreach (var (v, i) in ctx.Declared.Select((v, i) => (v, i)).Where(x => x.v.IsTable))
         {
-            sb.AppendLine($"""
-                    INSERT INTO {ctx.Dbg}.Locals (SessionId, Name, TypeName, Value)
-                    SELECT @__dbg_sid, '{v.Name}', 'TABLE',
-                           (SELECT * FROM {v.Name} FOR JSON AUTO, INCLUDE_NULL_VALUES);
-                """);
+            var insert = $"""
+                INSERT INTO {ctx.Dbg}.Locals (SessionId, Ordinal, Name, TypeName, Value)
+                SELECT @__dbg_sid, {i}, '{v.Name}',
+                       'TABLE(' + CAST((SELECT COUNT(*) FROM {v.Name}) AS NVARCHAR(20)) + ')',
+                       (SELECT TOP ({TableCaptureRows}) * FROM {v.Name} FOR JSON AUTO, INCLUDE_NULL_VALUES);
+                """;
+            if (v.IsTempTable)
+            {
+                sb.AppendLine($"    IF OBJECT_ID('tempdb..{v.Name}') IS NOT NULL");
+                sb.AppendLine($"        EXEC sp_executesql N'{insert.Replace("'", "''")}', N'@__dbg_sid UNIQUEIDENTIFIER', @__dbg_sid;");
+            }
+            else
+            {
+                sb.AppendLine(insert);
+            }
         }
+        return sb.ToString();
+    }
+
+    /// <summary>Efter en paus: läs in värden som klienten satt (setVariable) och töm.
+    /// SELECT @x = ... utan träff lämnar @x orörd; en rad med NULL sätter NULL.</summary>
+    private static string BuildOverridesApply(Context ctx)
+    {
+        var scalars = ctx.Declared.Where(v => !v.IsTable).ToList();
+        if (scalars.Count == 0) return string.Empty;
+        var sb = new StringBuilder();
+        sb.AppendLine($"    IF EXISTS (SELECT 1 FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = @__dbg_sid)");
+        sb.AppendLine("    BEGIN");
+        foreach (var v in scalars)
+        {
+            var t = v.TypeName.ToLowerInvariant();
+            var convert = t.StartsWith("binary") || t.StartsWith("varbinary")
+                ? $"CONVERT({v.TypeName}, Value, 1)"
+                : $"TRY_CONVERT({v.TypeName}, Value)";
+            sb.AppendLine($"        SELECT {v.Name} = {convert} FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = @__dbg_sid AND Name = '{v.Name}';");
+        }
+        sb.AppendLine($"        DELETE FROM {ctx.Dbg}.Overrides WHERE SessionId = @__dbg_sid;");
+        sb.AppendLine("    END");
         return sb.ToString();
     }
 

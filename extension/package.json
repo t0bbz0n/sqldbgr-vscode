@@ -5,12 +5,24 @@
   "version": "0.1.0",
   "publisher": "your-publisher-id",
   "icon": "media/icon.png",
-  "repository": { "type": "git", "url": "https://github.com/t0bbz0n/sqldbgr-vscode" },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Debuggers"],
-  "activationEvents": ["onDebugResolve:tsql"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/t0bbz0n/sqldbgr-vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onDebugResolve:tsql",
+    "onLanguage:sql"
+  ],
   "main": "./out/extension.js",
-  "extensionDependencies": ["ms-dotnettools.vscode-dotnet-runtime"],
+  "extensionDependencies": [
+    "ms-dotnettools.vscode-dotnet-runtime"
+  ],
   "contributes": {
     "configuration": {
       "title": "sqldbgr",
@@ -19,58 +31,100 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "SQL Server connection string som används när launch-konfigurationen saknar `connectionString`. Lämna tom för att bli tillfrågad vid start."
+          "description": "%config.connectionString%"
+        },
+        "sqldbgr.moduleFiles": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "debug",
+            "run"
+          ],
+          "default": "ask",
+          "description": "%config.moduleFiles%"
         }
       }
     },
-    "breakpoints": [{ "language": "sql" }],
+    "breakpoints": [
+      {
+        "language": "sql"
+      }
+    ],
     "debuggers": [
       {
         "type": "tsql",
         "label": "sqldbgr",
-        "languages": ["sql"],
+        "languages": [
+          "sql"
+        ],
         "configurationAttributes": {
           "launch": {
-            "required": ["program", "connectionString"],
+            "required": [
+              "program"
+            ],
             "properties": {
               "program": {
                 "type": "string",
-                "description": "Sökväg till .sql-filen som ska debuggas.",
+                "description": "%launch.program%",
                 "default": "${file}"
               },
               "connectionString": {
                 "type": "string",
-                "description": "SQL Server connection string."
+                "description": "%launch.connectionString%"
               },
               "mode": {
                 "type": "string",
-                "enum": ["invoke", "module", "attach"],
+                "enum": [
+                  "invoke",
+                  "module",
+                  "attach"
+                ],
                 "default": "invoke",
-                "description": "invoke = kör scriptet, module = debugga kroppen på filens CREATE FUNCTION/PROCEDURE med parametervärden, attach = vänta på markerad trafik (kräver licens mot remote)."
+                "description": "%launch.mode%"
               },
               "params": {
                 "type": "object",
-                "description": "Parametervärden i modulläge (namn -> värde, null för NULL). Saknade parametrar efterfrågas vid start.",
+                "description": "%launch.params%",
                 "default": {}
               },
               "stopOnEntry": {
                 "type": "boolean",
                 "default": false,
-                "description": "Stanna på första statementet även utan breakpoints."
+                "description": "%launch.stopOnEntry%"
+              },
+              "transaction": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "rollback",
+                  "commit"
+                ],
+                "default": "none",
+                "description": "%launch.transaction%"
+              },
+              "debugDatabase": {
+                "type": "string",
+                "description": "%launch.debugDatabase%"
               },
               "sidecarUrl": {
                 "type": "string",
-                "description": "URL till en sidecar. Utelämnas normalt: varje VS Code-fönster startar då sin egen sidecar på en slumpport. Ange bara om du kör sidecaren själv (t.ex. http://localhost:5199)."
+                "description": "%launch.sidecarUrl%"
+              },
+              "sidecarToken": {
+                "type": "string",
+                "description": "%launch.sidecarToken%"
               },
               "autoStartSidecar": {
                 "type": "boolean",
                 "default": true,
-                "description": "Starta en egen sidecar automatiskt (buntad i extensionen). Sätt false för att bara använda sidecarUrl."
+                "description": "%launch.autoStartSidecar%"
               },
               "sidecarCommand": {
                 "type": "array",
-                "items": { "type": "string" },
-                "description": "Kommando som startar sidecaren; --port läggs på automatiskt. Default: [\"npx\", \"-y\", \"sqldbgr-sidecar\"]. Under utveckling: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"]."
+                "items": {
+                  "type": "string"
+                },
+                "description": "%launch.sidecarCommand%"
               }
             }
           }
@@ -79,14 +133,74 @@
           {
             "type": "tsql",
             "request": "launch",
-            "name": "Debug T-SQL (lokal)",
+            "name": "Debug T-SQL (local)",
             "program": "${file}",
-            "connectionString": "Server=(localdb)\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true",
+            "connectionString": "Server=(localdb)\\\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true",
             "mode": "invoke"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "%snippet.local%",
+            "description": "%snippet.local%",
+            "body": {
+              "type": "tsql",
+              "request": "launch",
+              "name": "Debug T-SQL (local)",
+              "program": "^\"\\${file}\"",
+              "connectionString": "Server=(localdb)\\\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true"
+            }
+          },
+          {
+            "label": "%snippet.dryrun%",
+            "description": "%snippet.dryrun%",
+            "body": {
+              "type": "tsql",
+              "request": "launch",
+              "name": "Debug T-SQL (dry run)",
+              "program": "^\"\\${file}\"",
+              "connectionString": "Server=(localdb)\\\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true",
+              "transaction": "rollback"
+            }
           }
         ]
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "sqldbgr.debugCurrentFile",
+        "title": "%command.debugCurrentFile%",
+        "category": "sqldbgr",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "sqldbgr.debugModule",
+        "title": "%command.debugModule%",
+        "category": "sqldbgr"
+      },
+      {
+        "command": "sqldbgr.openLastResults",
+        "title": "%command.openLastResults%",
+        "category": "sqldbgr"
+      },
+      {
+        "command": "sqldbgr.forgetConnection",
+        "title": "%command.forgetConnection%",
+        "category": "sqldbgr"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "sqldbgr.debugCurrentFile",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "sqldbgr.debugModule",
+          "when": "editorLangId == sql"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p .",
@@ -102,5 +216,6 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.4.0"
-  }
+  },
+  "l10n": "./l10n"
 }

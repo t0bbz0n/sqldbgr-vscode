@@ -58,7 +58,12 @@ SQL-fel mappade till originalrad med exception-stopp, slutläge i modulläge,
    `IF [Db].__dbg.ShouldPause(@stmt_id) = 1 BEGIN <tabellcapture>; EXEC
    Pause END` där `ShouldPause` är en scalar function som läser `Control`.
 
-## Fas 3 – vardagsupplevelse
+## Fas 3 – vardagsupplevelse ✅
+
+*Klar: restart utan omfrågning + `moduleFiles`, span-mappning, hover/watch,
+Pause-knapp, CodeLens + kommandon + snippets, parse-fel i Problems, Locals-polish
+(ordning, ISO-datum, hex, TABLE(n) med TOP 100), resultat i full bredd,
+mssql-profiler + SecretStorage, temp-tabeller, sidecar-logg.*
 
 - **Restart utan omfrågning.** `[S]` Ctrl+Shift+F5 går via
   `resolveDebugConfiguration` igen: QuickPick och parameterpanel visas
@@ -84,7 +89,14 @@ SQL-fel mappade till originalrad med exception-stopp, slutläge i modulläge,
 - **Temp-tabeller (`#t`) i Locals.** `[M]`
 - **Sidecar-loggen.** `[S]` Warning som default.
 
-## Fas 4 – nya use cases
+## Fas 4 – nya use cases ✅ (utom step-into)
+
+*Klar: transaktionsläge, villkorliga breakpoints/hit counts/logpoints,
+setVariable via `__dbg.Overrides`, heartbeat + städning av föräldralösa
+sessioner, `debugDatabase`. Dessutom en omdesign av låsningen: `Control`
+skrivs bara av sidecaren och `PauseState` bara av `Pause` (allt läses NOLOCK),
+vilket rättade en latent deadlock vid paus inne i en användartransaktion.
+Kvar: step-into i stored procedures `[L]`.*
 
 - **Transaktionsläge ("dry run").** `[S/M]` `transaction: rollback |
   commit | none`; rullar tillbaka vid slut/stop.
@@ -97,7 +109,12 @@ SQL-fel mappade till originalrad med exception-stopp, slutläge i modulläge,
   används inte; `Pause` ger upp efter t.ex. 60 s utan heartbeat.
 - **Debugschema i annan databas.** `[S]` För miljöer utan DDL-rätt.
 
-## Fas 5 – säkerhet, publicering, kvalitet
+## Fas 5 – säkerhet, publicering, kvalitet (delvis ✅)
+
+*Klar: token-auth mellan extension och sidecar, `extension/README.md` +
+`CHANGELOG.md`, UI på engelska med svensk l10n, enhets- och integrationstester
+i CI, sidecar-loggnivå. Kvar: skärmdumpar/GIF, riktigt publisher-id,
+`@vscode/test-electron`, attach-läge.*
 
 - **Auth mellan extension och sidecar.** `[M]` Sidecaren lyssnar på
   127.0.0.1 men utan autentisering: varje lokal process kan läsa

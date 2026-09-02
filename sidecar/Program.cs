@@ -15,7 +15,27 @@ Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls($"http://127.0.0.1:{port}"); // --port 0 = slumpport (en sidecar per VS Code-fönster)
+// ASP.NET:s info-loggning fyller annars output-kanalen i VS Code
+builder.Logging.SetMinimumLevel(args.Contains("--verbose") ? LogLevel.Information : LogLevel.Warning);
 var app = builder.Build();
+
+// Auth: extensionen ger en token per start (SQLDBGR_TOKEN). Utan den kan varje
+// lokal process läsa filer via /inspect och starta sessioner med användarens
+// inloggning. Saknas variabeln (egenstartad sidecar) körs utan auth.
+var token = Environment.GetEnvironmentVariable("SQLDBGR_TOKEN");
+if (!string.IsNullOrEmpty(token))
+{
+    app.Use(async (ctx, next) =>
+    {
+        if (ctx.Request.Path == "/health" || ctx.Request.Headers.Authorization == $"Bearer {token}")
+        {
+            await next();
+            return;
+        }
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await ctx.Response.WriteAsync("missing or invalid sidecar token");
+    });
+}
 
 // Extensionen läser den faktiska adressen från stdout när porten är slumpad.
 app.Lifetime.ApplicationStarted.Register(() =>
@@ -37,7 +57,15 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "sqldbgr-s
 app.MapPost("/inspect", async (InspectRequest req) =>
 {
     var source = await ReadSourceAsync(req.ProgramPath);
-    return Results.Ok(new { module = new ScriptDomAnalyzer().InspectModule(source) });
+    var analyzer = new ScriptDomAnalyzer();
+    return Results.Ok(new
+    {
+        module = analyzer.InspectModule(source),
+        parseErrors = analyzer.GetParseErrors(source),
+        // spans så klienten kan mappa breakpoints inuti flerradiga statements
+        statements = analyzer.Instrument(source, req.ProgramPath).StmtToSpan
+            .Select(kv => new { stmtId = kv.Key, kv.Value.Line, kv.Value.EndLine })
+    });
 });
 
 // Parsar och instrumenterar men kör INTE - klienten sätter breakpoints först
@@ -55,9 +83,11 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
     }
     catch (Exception ex)
     {
-        return Results.BadRequest(new { message = $"Kunde inte ansluta: {ex.Message}" });
+        return Results.BadRequest(new { message = $"Could not connect: {ex.Message}" });
     }
-    var debugSchema = $"[{database.Replace("]", "]]")}].__dbg";
+    // __dbg-schemat kan läggas i en annan databas (miljöer utan DDL-rätt i måldatabasen)
+    var debugDatabase = string.IsNullOrWhiteSpace(req.DebugDatabase) ? database : req.DebugDatabase;
+    var debugSchema = $"[{debugDatabase.Replace("]", "]]")}].__dbg";
 
     var source = await ReadSourceAsync(req.ProgramPath);
     var analyzer = new ScriptDomAnalyzer();
@@ -68,13 +98,15 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
     if (instrumented.Errors.Count > 0)
         return Results.BadRequest(new { message = "Parse errors", errors = instrumented.Errors });
 
-    var runner = new DebugSessionRunner(req.ConnectionString, instrumented, req.Mode, req.Params);
+    var options = new DebugSessionOptions(req.Mode, req.Transaction ?? "none", debugDatabase);
+    var runner = new DebugSessionRunner(req.ConnectionString, instrumented, options, req.Params);
     sessions[runner.SessionId] = runner;
 
     return Results.Ok(new
     {
         sessionId = runner.SessionId,
-        lineMap = instrumented.LineMap.Select(kv => new { line = kv.Key, stmtId = kv.Value })
+        lineMap = instrumented.LineMap.Select(kv => new { line = kv.Key, stmtId = kv.Value }),
+        statements = instrumented.StmtToSpan.Select(kv => new { stmtId = kv.Key, kv.Value.Line, kv.Value.EndLine })
     });
 });
 
@@ -88,7 +120,7 @@ app.MapPost("/session/{id:guid}/run", (Guid id, RunRequest req) =>
 app.MapPost("/session/{id:guid}/breakpoints", async (Guid id, BreakpointsRequest req) =>
 {
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
-    await runner.SetBreakpointsAsync(req.StmtIds);
+    await runner.SetBreakpointsAsync(req.Breakpoints);
     return Results.Ok();
 });
 
@@ -97,6 +129,21 @@ app.MapPost("/session/{id:guid}/signal", async (Guid id, SignalRequest req) =>
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
     await runner.SignalAsync(req.Command);
     return Results.Ok();
+});
+
+app.MapPost("/session/{id:guid}/variables", async (Guid id, SetVariableRequest req) =>
+{
+    if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
+    await runner.SetVariableAsync(req.Name, req.Value);
+    return Results.Ok();
+});
+
+// Hover/Watch: uttryck utvärderas mot fångade locals på en egen connection
+app.MapPost("/session/{id:guid}/evaluate", async (Guid id, EvaluateRequest req) =>
+{
+    if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
+    var (value, error) = await runner.EvaluateAsync(req.Expression);
+    return Results.Ok(new { value, error });
 });
 
 app.MapGet("/session/{id:guid}/locals", async (Guid id) =>
@@ -161,9 +208,13 @@ public record StartSessionRequest(
     string ProgramPath,
     string ConnectionString,
     string Mode,
-    Dictionary<string, object?> Params);
+    Dictionary<string, object?> Params,
+    string? Transaction = null,
+    string? DebugDatabase = null);
 
 public record InspectRequest(string ProgramPath);
 public record RunRequest(bool StopOnEntry);
-public record BreakpointsRequest(int[] StmtIds);
+public record BreakpointsRequest(BreakpointSpec[] Breakpoints);
 public record SignalRequest(string Command);
+public record SetVariableRequest(string Name, string? Value);
+public record EvaluateRequest(string Expression);

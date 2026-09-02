@@ -116,7 +116,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture) : IClassFixture<Sq
         await run.Runner.SignalAsync("continue");
         await run.ExpectAsync("terminated");
         Assert.DoesNotContain(run.Outputs, o => o.Contains("NeverRuns"));
-        Assert.Contains(run.Outputs, o => o.Contains("rad 2"));
+        Assert.Contains(run.Outputs, o => o.Contains("line 2"));
     }
 
     [SkippableFact]
@@ -156,7 +156,113 @@ public class RunnerIntegrationTests(SqlServerFixture fixture) : IClassFixture<Sq
 
         await run.Runner.SignalAsync("continue");
         await run.ExpectAsync("terminated");
-        Assert.Contains(run.Outputs, o => o.Contains("returvärde = 7") && o.Contains("@result = 15"));
+        Assert.Contains(run.Outputs, o => o.Contains("return value = 7") && o.Contains("@result = 15"));
+    }
+
+    [SkippableFact]
+    public async Task PauseInsideUserTransaction_DoesNotDeadlock()
+    {
+        RequireSqlServer();
+        // Regression: Pause skrev tidigare i Control inne i användarens transaktion,
+        // och X-låset blockerade sidecarens continue-signal för evigt.
+        var run = await DebugRun.StartAsync(Cs,
+            "BEGIN TRAN;\nINSERT INTO dbo.AbortProbe VALUES (10);\nSELECT 1 AS InsideTran;\nROLLBACK;", [3]);
+        Assert.Equal(3, (await run.ExpectPausedAsync()).line);
+        Assert.NotNull(await run.LocalsAsync()); // NOLOCK-läsning får inte blockera
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
+    public async Task TransactionRollback_UndoesChanges()
+    {
+        RequireSqlServer();
+        await using (var conn = new SqlConnection(Cs)) await conn.ExecuteAsync("TRUNCATE TABLE dbo.AbortProbe");
+        var run = await DebugRun.StartAsync(Cs, "INSERT INTO dbo.AbortProbe VALUES (20);\nSELECT COUNT(*) AS DuringRun FROM dbo.AbortProbe;", [], transaction: "rollback");
+        await run.ExpectAsync("terminated");
+        Assert.Contains(run.Outputs, o => o.Contains("DuringRun") && o.Contains("1"));
+        Assert.Contains(run.Outputs, o => o.Contains("rolled back"));
+        await using var check = new SqlConnection(Cs);
+        Assert.Equal(0, await check.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM dbo.AbortProbe"));
+    }
+
+    [SkippableFact]
+    public async Task ConditionalBreakpoint_StopsOnlyWhenConditionIsTrue()
+    {
+        RequireSqlServer();
+        var run = await DebugRun.StartAsync(Cs, "DECLARE @i INT = 0;\nWHILE @i < 5 SET @i = @i + 1;\nSELECT @i;", [],
+            breakpoints: [new DebugRun.Bp(2, Condition: "@i = 3")]);
+        Assert.Equal(2, (await run.ExpectPausedAsync()).line);
+        Assert.Equal("3", (await run.LocalsAsync())["@i"]);
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
+    public async Task HitCountBreakpoint()
+    {
+        RequireSqlServer();
+        var run = await DebugRun.StartAsync(Cs, "DECLARE @i INT = 0;\nWHILE @i < 5 SET @i = @i + 1;\nSELECT @i;", [],
+            breakpoints: [new DebugRun.Bp(2, HitCondition: ">= 4")]);
+        await run.ExpectPausedAsync();
+        Assert.Equal("3", (await run.LocalsAsync())["@i"]); // fjärde träffen
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectPausedAsync();
+        Assert.Equal("4", (await run.LocalsAsync())["@i"]);
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
+    public async Task Logpoint_PrintsWithoutStopping()
+    {
+        RequireSqlServer();
+        var run = await DebugRun.StartAsync(Cs, "DECLARE @i INT = 0;\nWHILE @i < 3 SET @i = @i + 1;\nSELECT @i;", [],
+            breakpoints: [new DebugRun.Bp(2, LogMessage: "i is {@i} and doubled {@i * 2}")]);
+        await run.ExpectAsync("terminated");
+        Assert.Contains(run.Outputs, o => o.Contains("i is 0 and doubled 0"));
+        Assert.Contains(run.Outputs, o => o.Contains("i is 2 and doubled 4"));
+    }
+
+    [SkippableFact]
+    public async Task SetVariable_TakesEffectOnResume()
+    {
+        RequireSqlServer();
+        var run = await DebugRun.StartAsync(Cs, "DECLARE @x INT = 1;\nSET @x = @x + 1;\nSELECT @x AS X;", [2]);
+        await run.ExpectPausedAsync();
+        await run.Runner.SetVariableAsync("@x", "10");
+        Assert.Equal("10", (await run.LocalsAsync())["@x"]); // speglas direkt i Locals
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+        Assert.Contains(run.Outputs, o => o.Contains("X") && o.Contains("11"));
+    }
+
+    [SkippableFact]
+    public async Task TempTable_AppearsInLocals()
+    {
+        RequireSqlServer();
+        var run = await DebugRun.StartAsync(Cs, "CREATE TABLE #t (a INT);\nINSERT INTO #t VALUES (1), (2);\nSELECT 1;", [3]);
+        await run.ExpectPausedAsync();
+        var locals = await run.Runner.GetLocalsAsync();
+        var t = Assert.Single(locals, l => l.Name == "#t");
+        Assert.Equal("TABLE(2)", t.TypeName);
+        Assert.Contains("\"a\":2", t.Value);
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
+    public async Task Evaluate_ComputesExpressionFromLocals()
+    {
+        RequireSqlServer();
+        var run = await DebugRun.StartAsync(Cs, "DECLARE @x INT = 4;\nDECLARE @s NVARCHAR(10) = N'ab';\nSELECT 1;", [3]);
+        await run.ExpectPausedAsync();
+        Assert.Equal(("40", (string?)null), await run.Runner.EvaluateAsync("@x * 10"));
+        Assert.Equal(("abab", (string?)null), await run.Runner.EvaluateAsync("@s + @s"));
+        var (_, error) = await run.Runner.EvaluateAsync("1 / 0");
+        Assert.NotNull(error);
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
     }
 
     [SkippableFact]

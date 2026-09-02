@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'child_process';
+import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
@@ -10,6 +11,9 @@ const HEALTH_PROBE_TIMEOUT_MS = 1000;
 const HEALTH_POLL_INTERVAL_MS = 250;
 // Generöst: första körningen kan behöva ladda ner .NET-runtimen/npx-paketet.
 const STARTUP_TIMEOUT_MS = 120_000;
+const t = vscode.l10n.t;
+
+export interface SidecarEndpoint { url: string; token?: string; }
 
 /**
  * Ser till att en sidecar kör innan en debug-session startar och returnerar
@@ -31,6 +35,7 @@ export class SidecarManager implements vscode.Disposable {
   private output: vscode.OutputChannel | null = null;
   /** URL:en för sidecaren vi själva startat (slumpport eller explicit). */
   private ownUrl: string | null = null;
+  private ownToken: string | undefined;
   private urlFromStdout: Promise<string> | null = null;
 
   constructor(
@@ -39,13 +44,15 @@ export class SidecarManager implements vscode.Disposable {
     private readonly expectedVersion: string
   ) {}
 
-  async ensureRunning(explicitUrl: string | undefined, command?: string[]): Promise<string> {
+  async ensureRunning(explicitUrl: string | undefined, command?: string[]): Promise<SidecarEndpoint> {
     if (explicitUrl) {
       if (await this.isHealthy(explicitUrl)) {
         // En kvarlämnad äldre sidecar svarar friskt men saknar nya endpoints -
         // byt ut den. Dev-override hoppar över kontrollen (dotnet run stämplar
         // ingen version).
-        if (command?.length || !(await this.isStale(explicitUrl))) return explicitUrl;
+        if (command?.length || !(await this.isStale(explicitUrl))) {
+          return { url: explicitUrl, token: this.ownUrl === explicitUrl ? this.ownToken : process.env.SQLDBGR_TOKEN };
+        }
         await this.replaceStale(explicitUrl);
       }
       if (!this.isOwnProcessAlive()) {
@@ -53,17 +60,17 @@ export class SidecarManager implements vscode.Disposable {
         this.ownUrl = explicitUrl;
       }
       await this.waitForHealthy(explicitUrl);
-      return explicitUrl;
+      return { url: explicitUrl, token: this.ownToken };
     }
 
     // Egen sidecar per fönster på slumpport
     if (this.isOwnProcessAlive() && this.ownUrl && await this.isHealthy(this.ownUrl)) {
-      return this.ownUrl;
+      return { url: this.ownUrl, token: this.ownToken };
     }
     await this.startProcess(await this.resolveCommand('0', command));
     this.ownUrl = await this.waitForUrl();
     await this.waitForHealthy(this.ownUrl);
-    return this.ownUrl;
+    return { url: this.ownUrl, token: this.ownToken };
   }
 
   private isOwnProcessAlive(): boolean {
@@ -74,7 +81,7 @@ export class SidecarManager implements vscode.Disposable {
   private async waitForUrl(): Promise<string> {
     const timeout = new Promise<never>((_, reject) => setTimeout(() => {
       this.output?.show(true);
-      reject(new Error(`sidecaren rapporterade ingen adress inom ${STARTUP_TIMEOUT_MS / 1000}s - se output-kanalen "sqldbgr Sidecar".`));
+      reject(new Error(t('the sidecar did not report an address within {0}s - see the "sqldbgr Sidecar" output channel.', STARTUP_TIMEOUT_MS / 1000)));
     }, STARTUP_TIMEOUT_MS));
     return Promise.race([this.urlFromStdout!, timeout]);
   }
@@ -89,7 +96,7 @@ export class SidecarManager implements vscode.Disposable {
   }
 
   private async replaceStale(sidecarUrl: string): Promise<void> {
-    this.channel().appendLine(`[version] sidecaren på ${sidecarUrl} är en annan version än ${this.expectedVersion} - startar om`);
+    this.channel().appendLine(`[version] sidecar at ${sidecarUrl} is not version ${this.expectedVersion} - restarting`);
     try { await new SidecarClient(sidecarUrl).shutdown(); } catch { /* gammal utan /shutdown */ }
     this.proc?.kill();
     this.proc = null;
@@ -129,12 +136,12 @@ export class SidecarManager implements vscode.Disposable {
         'dotnet.acquire',
         { version: '8.0', mode: 'aspnetcore', requestingExtensionId: this.extensionId });
       if (result?.dotnetPath) {
-        this.channel().appendLine(`[dotnet] använder ${result.dotnetPath}`);
+        this.channel().appendLine(`[dotnet] using ${result.dotnetPath}`);
         return result.dotnetPath;
       }
     } catch (err) {
       this.channel().appendLine(
-        `[dotnet] kunde inte hämta runtime via .NET Install Tool (${(err as Error).message}) - provar systemets dotnet.`);
+        `[dotnet] could not acquire a runtime via the .NET Install Tool (${(err as Error).message}) - trying the system dotnet.`);
     }
     return 'dotnet';
   }
@@ -148,9 +155,14 @@ export class SidecarManager implements vscode.Disposable {
     const [exe, ...args] = command;
     this.channel().appendLine(`[start] ${exe} ${args.join(' ')}`);
 
+    // Auth-token per process: bara den här extensionen kan prata med sidecaren.
+    this.ownToken = randomBytes(24).toString('hex');
     // shell krävs för npx.cmd på Windows; en exe-sökväg ska INTE gå via shell
     // (sökvägar med mellanslag går sönder av shell-quoting)
-    this.proc = spawn(exe, args, { shell: process.platform === 'win32' && exe === 'npx' });
+    this.proc = spawn(exe, args, {
+      shell: process.platform === 'win32' && exe === 'npx',
+      env: { ...process.env, SQLDBGR_TOKEN: this.ownToken }
+    });
     this.ownUrl = null;
 
     let resolveUrl: (url: string) => void = () => {};
@@ -165,10 +177,10 @@ export class SidecarManager implements vscode.Disposable {
       const m = /SQLDBGR_SIDECAR_URL=(\S+)/.exec(stdoutBuffer);
       if (m) resolveUrl(m[1].replace(/\/$/, ''));
     });
-    this.proc.on('exit', code => rejectUrl(new Error(`sidecar-processen avslutades med kod ${code}`)));
+    this.proc.on('exit', code => rejectUrl(new Error(t('the sidecar process exited with code {0}', String(code)))));
     this.proc.stderr?.on('data', (d: Buffer) => this.output?.append(d.toString()));
-    this.proc.on('error', err => this.output?.appendLine(`[fel] ${err.message}`));
-    this.proc.on('exit', code => this.output?.appendLine(`[avslutad] exit code ${code}`));
+    this.proc.on('error', err => this.output?.appendLine(`[error] ${err.message}`));
+    this.proc.on('exit', code => this.output?.appendLine(`[exited] exit code ${code}`));
   }
 
   private async waitForHealthy(sidecarUrl: string): Promise<void> {
@@ -177,14 +189,14 @@ export class SidecarManager implements vscode.Disposable {
       if (this.proc && this.proc.exitCode !== null) {
         this.output?.show(true);
         throw new Error(
-          `sidecar-processen avslutades med kod ${this.proc.exitCode} - se output-kanalen "sqldbgr Sidecar".`);
+          t('the sidecar process exited with code {0} - see the "sqldbgr Sidecar" output channel.', String(this.proc.exitCode)));
       }
       if (await this.isHealthy(sidecarUrl)) return;
       await new Promise(r => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
     }
     this.output?.show(true);
     throw new Error(
-      `sidecaren svarade inte på ${sidecarUrl}/health inom ${STARTUP_TIMEOUT_MS / 1000}s.`);
+      t('the sidecar did not answer on {0}/health within {1}s.', sidecarUrl, STARTUP_TIMEOUT_MS / 1000));
   }
 
   private isHealthy(sidecarUrl: string): Promise<boolean> {
