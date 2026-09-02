@@ -4,6 +4,8 @@
   "description": "Breakpoint debugging for T-SQL scripts and stored procedures in SQL Server.",
   "version": "0.1.0",
   "publisher": "your-publisher-id",
+  "icon": "media/icon.png",
+  "repository": { "type": "git", "url": "https://github.com/t0bbz0n/sqldbgr-vscode" },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Debuggers"],
   "activationEvents": ["onDebugResolve:tsql"],
