@@ -4,7 +4,9 @@ Genomgång av kodbasen (extension + sidecar) med fokus på missade use cases,
 buggar i flödet och användarupplevelse. Prioriterat i faser; S/M/L =
 uppskattad insats (timmar / dag / flera dagar).
 
-## Fas 1 – gör verktyget pålitligt (buggar och grundläggande UX)
+## Fas 1 – gör verktyget pålitligt (buggar och grundläggande UX) ✅
+
+*Klar (commits `1b9a242`, `26e35df`). Punkterna nedan behålls som beskrivning av vad som gjordes.*
 
 1. **Breakpoints satta före F5 försvinner.** `[M]` *Bugg.* Adaptern skickar
    `InitializedEvent` redan i `initializeRequest`, så VS Code skickar
