@@ -93,22 +93,19 @@ För att bygga och installera lokalt:
 cd extension
 npm install
 npm run compile
-npx @vscode/vsce package                            # -> tsql-debugger-0.0.1.vsix
-code --install-extension tsql-debugger-0.0.1.vsix
+npm run package                                     # bundlar sidecaren + vsce package
+code --install-extension tsql-debugger-0.1.0.vsix
 ```
 
 (eller Extensions-panelen → `⋯` → *Install from VSIX…*)
-
-OBS: autostarten kör `npx -y tsql-debugger-sidecar`, så tills det paketet
-är publicerat på npm måste en installerad extension antingen peka om
-`sidecarCommand` mot `dotnet run --project .../sidecar --` eller köra med
-en manuellt startad sidecar.
 
 För Marketplace-publicering: skapa en publisher på
 marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 (står som `your-publisher-id`), och kör `npx @vscode/vsce publish`.
 
 ## Status / roadmap
+
+Detaljerad plan framåt med prioriteringar: se [ROADMAP.md](ROADMAP.md).
 
 - [x] DAP-skelett: launch, breakpoints, continue/step, locals, SSE-events
 - [x] ScriptDom-instrumentering, rekursivt ner i `BEGIN/END`, `IF`/`ELSE`,
