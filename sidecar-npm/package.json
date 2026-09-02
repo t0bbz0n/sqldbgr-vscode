@@ -1,10 +1,10 @@
 {
-  "name": "tsql-debugger-sidecar",
+  "name": "sqldbgr-sidecar",
   "version": "0.1.0",
-  "description": "Sidecar service for the tsql-debugger VS Code extension. Runnable via npx; requires the .NET 8 runtime.",
+  "description": "Sidecar service for the sqldbgr VS Code extension. Runnable via npx; requires the .NET 8 runtime.",
   "license": "MIT",
   "bin": {
-    "tsql-debugger-sidecar": "bin/tsql-debugger-sidecar.js"
+    "sqldbgr-sidecar": "bin/sqldbgr-sidecar.js"
   },
   "files": [
     "bin",

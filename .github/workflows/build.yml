@@ -68,7 +68,7 @@ jobs:
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
-          name: tsql-debugger-vsix-${{ steps.version.outputs.version }}
+          name: sqldbgr-vsix-${{ steps.version.outputs.version }}
           path: extension/*.vsix
           if-no-files-found: error
 

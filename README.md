@@ -1,4 +1,4 @@
-# tsql-debugger
+# sqldbgr
 
 Breakpoint-debugging för T-SQL i VS Code – sätt breakpoints i `.sql`-filer,
 stega igenom statements, inspektera variabler. Ingen Visual Studio, ingen SSDT.
@@ -40,7 +40,7 @@ innan det körs. `PRINT`, resultatmängder och SQL-fel hamnar i Debug Console;
 ett SQL-fel stannar på den felande raden så Locals kan inspekteras. Efter
 sista statementet finns ett virtuellt stopp (vid stegning) som visar
 slutläget. Ingen launch.json behövs - saknas `connectionString` hämtas den från settingen
-`tsql-debugger.connectionString`, och finns inte den heller frågar
+`sqldbgr.connectionString`, och finns inte den heller frågar
 extensionen efter en vid start (med erbjudande att spara i settings).
 Vill man styra mer skapar man en launch-konfiguration av typen `tsql`
 (snippet finns).
@@ -57,13 +57,13 @@ annars sidecaren själv. Startkommandot väljs i ordning:
    (ms-dotnettools.vscode-dotnet-runtime, ett extension-beroende) laddar ner
    automatiskt vid första körningen. Finns runtimen redan svarar den direkt.
    Utan Install Tool (t.ex. i dev-hosten) provas systemets `dotnet`.
-3. `npx -y tsql-debugger-sidecar` (npm-paketet i `sidecar-npm/`) - fallback
+3. `npx -y sqldbgr-sidecar` (npm-paketet i `sidecar-npm/`) - fallback
    när ingen buntad sidecar finns. Kör `npm run bundle-sidecar` i
    `extension/` för att slippa den i dev-hosten.
 
 Processen ägs av extensionen och städas undan när den avaktiveras; en
 sidecar man startat själv rörs aldrig. Loggarna hamnar i output-kanalen
-**T-SQL Debugger Sidecar**.
+**sqldbgr Sidecar**.
 
 Under utveckling (opublicerat paket / lokala ändringar) pekar man om
 startkommandot i launch-konfigurationen:
@@ -99,7 +99,7 @@ cd extension
 npm install
 npm run compile
 npm run package                                     # bundlar sidecaren + vsce package
-code --install-extension tsql-debugger-0.1.0.vsix
+code --install-extension sqldbgr-0.1.0.vsix
 ```
 
 (eller Extensions-panelen → `⋯` → *Install from VSIX…*)

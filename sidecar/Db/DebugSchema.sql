@@ -1,4 +1,4 @@
--- tsql-debugger runtime-schema. Skapas idempotent per databas.
+-- sqldbgr runtime-schema. Skapas idempotent per databas.
 -- Allt här körs i användarens egen databas och är öppen källkod (se NOTICE.md).
 
 IF SCHEMA_ID(N'__dbg') IS NULL
@@ -43,7 +43,7 @@ BEGIN
     IF @cmd IS NULL RETURN;  -- ingen kontrollrad: kör obehindrat
 
     -- 'abort' (Stop i klienten): döda batchen här, inga fler statements körs.
-    IF @cmd = 'abort' THROW 50099, 'tsql-debugger: sessionen avbröts', 1;
+    IF @cmd = 'abort' THROW 50099, 'sqldbgr: sessionen avbröts', 1;
 
     -- 'continue': pausa bara vid breakpoint. 'stepOver'/'stepIn'/'entry': pausa alltid.
     IF @cmd = 'continue'
@@ -66,6 +66,6 @@ BEGIN
     UPDATE __dbg.Control SET Signaled = 0, PausedAtStmt = NULL
     WHERE SessionId = @sid;
 
-    IF @cmd = 'abort' THROW 50099, 'tsql-debugger: sessionen avbröts', 1;
+    IF @cmd = 'abort' THROW 50099, 'sqldbgr: sessionen avbröts', 1;
 END
 GO

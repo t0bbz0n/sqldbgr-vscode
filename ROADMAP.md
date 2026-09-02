@@ -1,4 +1,4 @@
-# Roadmap – tsql-debugger
+# Roadmap – sqldbgr
 
 Genomgång av kodbasen (extension + sidecar) med fokus på missade use cases,
 buggar i flödet och användarupplevelse. Prioriterat i faser; S/M/L =
@@ -58,7 +58,7 @@ uppskattad insats (timmar / dag / flera dagar).
 - **Upptäckbarhet.** `[M]` CodeLens "▷ Debugga med parametrar" ovanför
   `CREATE PROCEDURE/FUNCTION`, kommandon i paletten ("T-SQL: Debugga aktuell
   fil", "…kör igen med samma parametrar") och en setting
-  `tsql-debugger.moduleFiles: ask | debug | run` så QuickPicken inte dyker
+  `sqldbgr.moduleFiles: ask | debug | run` så QuickPicken inte dyker
   upp vid varje F5.
 - **Parse-fel i Problems-panelen.** `[S]` Idag ett 400-fel i en dialog.
   Returnera rad/kolumn från sidecaren och publicera Diagnostics.

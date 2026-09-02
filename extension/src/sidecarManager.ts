@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { SidecarClient } from './sidecarClient';
 
-const NPX_FALLBACK_COMMAND = ['npx', '-y', 'tsql-debugger-sidecar'];
+const NPX_FALLBACK_COMMAND = ['npx', '-y', 'sqldbgr-sidecar'];
 const HEALTH_PROBE_TIMEOUT_MS = 1000;
 const HEALTH_POLL_INTERVAL_MS = 250;
 // Generöst: första körningen kan behöva ladda ner .NET-runtimen/npx-paketet.
@@ -22,7 +22,7 @@ const STARTUP_TIMEOUT_MS = 120_000;
  *  2. den buntade sidecaren i VSIX:en (sidecar-dist/), körd med en runtime
  *     som .NET Install Tool-extensionen hämtar automatiskt vid första
  *     körningen (fallback: systemets `dotnet`)
- *  3. npx tsql-debugger-sidecar (obundlad/dev-miljö)
+ *  3. npx sqldbgr-sidecar (obundlad/dev-miljö)
  */
 export class SidecarManager implements vscode.Disposable {
   private proc: ChildProcess | null = null;
@@ -111,7 +111,7 @@ export class SidecarManager implements vscode.Disposable {
   }
 
   private channel(): vscode.OutputChannel {
-    this.output ??= vscode.window.createOutputChannel('T-SQL Debugger Sidecar');
+    this.output ??= vscode.window.createOutputChannel('sqldbgr Sidecar');
     return this.output;
   }
 
@@ -134,7 +134,7 @@ export class SidecarManager implements vscode.Disposable {
       if (this.proc && this.proc.exitCode !== null) {
         this.output?.show(true);
         throw new Error(
-          `sidecar-processen avslutades med kod ${this.proc.exitCode} - se output-kanalen "T-SQL Debugger Sidecar".`);
+          `sidecar-processen avslutades med kod ${this.proc.exitCode} - se output-kanalen "sqldbgr Sidecar".`);
       }
       if (await this.isHealthy(sidecarUrl)) return;
       await new Promise(r => setTimeout(r, HEALTH_POLL_INTERVAL_MS));

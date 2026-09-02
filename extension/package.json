@@ -1,6 +1,6 @@
 {
-  "name": "tsql-debugger",
-  "displayName": "T-SQL Debugger",
+  "name": "sqldbgr",
+  "displayName": "sqldbgr",
   "description": "Breakpoint debugging for T-SQL scripts and stored procedures in SQL Server.",
   "version": "0.1.0",
   "publisher": "your-publisher-id",
@@ -13,9 +13,9 @@
   "extensionDependencies": ["ms-dotnettools.vscode-dotnet-runtime"],
   "contributes": {
     "configuration": {
-      "title": "T-SQL Debugger",
+      "title": "sqldbgr",
       "properties": {
-        "tsql-debugger.connectionString": {
+        "sqldbgr.connectionString": {
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
@@ -27,7 +27,7 @@
     "debuggers": [
       {
         "type": "tsql",
-        "label": "T-SQL Debugger",
+        "label": "sqldbgr",
         "languages": ["sql"],
         "configurationAttributes": {
           "launch": {
@@ -71,7 +71,7 @@
               "sidecarCommand": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Kommando som startar sidecaren; --port läggs på automatiskt. Default: [\"npx\", \"-y\", \"tsql-debugger-sidecar\"]. Under utveckling: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"]."
+                "description": "Kommando som startar sidecaren; --port läggs på automatiskt. Default: [\"npx\", \"-y\", \"sqldbgr-sidecar\"]. Under utveckling: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"]."
               }
             }
           }

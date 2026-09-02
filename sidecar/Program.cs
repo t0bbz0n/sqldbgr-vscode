@@ -16,7 +16,7 @@ var sessions = new ConcurrentDictionary<Guid, DebugSessionRunner>();
 // Extensionen probar denna för att avgöra om sidecaren redan kör.
 // Versionen stämplas vid publish (-p:Version=...) så man ser vilket bygge som kör.
 var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
-app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "tsql-debugger-sidecar", version }));
+app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "sqldbgr-sidecar", version }));
 
 // Hittar en ev. funktions-/procedurdefinition i filen så extensionen kan
 // erbjuda "debugga kroppen" och fråga efter parametervärden.

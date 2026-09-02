@@ -16,11 +16,11 @@ export function collectParameters(
   module: ModuleInfo,
   existing: Record<string, unknown>
 ): Promise<ParamValues | undefined> {
-  const stateKey = `tsql-debugger.lastParams:${module.name}`;
+  const stateKey = `sqldbgr.lastParams:${module.name}`;
   const lastUsed = context.workspaceState.get<ParamValues>(stateKey, {});
 
   const panel = vscode.window.createWebviewPanel(
-    'tsqlParameterPanel',
+    'sqldbgrParameterPanel',
     `Parametrar: ${module.name}`,
     vscode.ViewColumn.Active,
     { enableScripts: true, localResourceRoots: [] }

@@ -36,11 +36,11 @@ export function activate(context: vscode.ExtensionContext) {
         // connectionString: launch-konfig -> settings -> fråga användaren
         if (!config.connectionString) {
           config.connectionString = vscode.workspace
-            .getConfiguration('tsql-debugger').get<string>('connectionString') || undefined;
+            .getConfiguration('sqldbgr').get<string>('connectionString') || undefined;
         }
         if (!config.connectionString) {
           const entered = await vscode.window.showInputBox({
-            title: 'T-SQL Debugger: connection string',
+            title: 'sqldbgr: connection string',
             prompt: 'SQL Server-anslutningssträng för debug-sessionen',
             value: 'Server=(localdb)\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true',
             ignoreFocusOut: true
@@ -54,11 +54,11 @@ export function activate(context: vscode.ExtensionContext) {
           const sidecarUrl: string = config.sidecarUrl ?? 'http://localhost:5199';
           try {
             await vscode.window.withProgress(
-              { location: vscode.ProgressLocation.Notification, title: 'Startar T-SQL debugger-sidecar…' },
+              { location: vscode.ProgressLocation.Notification, title: 'Startar sqldbgr-sidecar…' },
               () => sidecarManager.ensureRunning(sidecarUrl, config.sidecarCommand));
           } catch (err) {
             vscode.window.showErrorMessage(
-              `tsql-debugger: ${(err as Error).message}`);
+              `sqldbgr: ${(err as Error).message}`);
             return undefined;
           }
         }
@@ -139,7 +139,7 @@ function offerToSaveConnectionString(connectionString: string): void {
     const target = choice === 'Spara globalt'
       ? vscode.ConfigurationTarget.Global
       : vscode.ConfigurationTarget.Workspace;
-    void vscode.workspace.getConfiguration('tsql-debugger')
+    void vscode.workspace.getConfiguration('sqldbgr')
       .update('connectionString', connectionString, target);
   });
 }

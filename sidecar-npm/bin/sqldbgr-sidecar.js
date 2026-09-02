@@ -10,19 +10,19 @@ const path = require('path');
 
 const dll = path.join(__dirname, '..', 'dist', 'SqlDebugger.Sidecar.dll');
 if (!fs.existsSync(dll)) {
-  console.error('tsql-debugger-sidecar: dist/SqlDebugger.Sidecar.dll saknas - paketet är felbyggt.');
+  console.error('sqldbgr-sidecar: dist/SqlDebugger.Sidecar.dll saknas - paketet är felbyggt.');
   console.error('Bygg med: npm run build (kräver .NET 8 SDK).');
   process.exit(1);
 }
 
 const probe = spawnSync('dotnet', ['--list-runtimes'], { encoding: 'utf8' });
 if (probe.error || probe.status !== 0) {
-  console.error('tsql-debugger-sidecar: hittar inte `dotnet`. Installera .NET 8-runtime:');
+  console.error('sqldbgr-sidecar: hittar inte `dotnet`. Installera .NET 8-runtime:');
   console.error('  https://dotnet.microsoft.com/download/dotnet/8.0');
   process.exit(1);
 }
 if (!/Microsoft\.AspNetCore\.App 8\./.test(probe.stdout)) {
-  console.error('tsql-debugger-sidecar: ASP.NET Core 8-runtime saknas. Installera "ASP.NET Core Runtime 8.0":');
+  console.error('sqldbgr-sidecar: ASP.NET Core 8-runtime saknas. Installera "ASP.NET Core Runtime 8.0":');
   console.error('  https://dotnet.microsoft.com/download/dotnet/8.0');
   process.exit(1);
 }

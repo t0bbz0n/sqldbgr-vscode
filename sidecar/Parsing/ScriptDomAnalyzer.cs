@@ -59,7 +59,7 @@ public record ModuleInfo(
 
 public class ScriptDomAnalyzer
 {
-    private const string Header = "-- Instrumenterad av tsql-debugger. Deployas ALDRIG permanent.";
+    private const string Header = "-- Instrumenterad av sqldbgr. Deployas ALDRIG permanent.";
 
     /// <summary>Hittar första funktions-/procedurdefinitionen i scriptet, för
     /// extensionens "debugga kroppen?"-fråga och parameterinsamling.</summary>
