@@ -109,11 +109,10 @@ SQL-fel mappade till originalrad med exception-stopp, slutläge i modulläge,
   F5 → paus → Locals; riktigt `publisher`-id. Beslut om UI-språk:
   strängarna är svenska rakt igenom, Marketplace-publik förväntar sig
   engelska (ev. med svensk `package.nls.sv.json`).
-- **Tester.** `[M]` Analysatorns ad hoc-harness → xunit i CI;
-  integrationstest mot `mcr.microsoft.com/mssql/server` som
-  service-container (pausmekanik, abort, exception-stopp, modulläge –
-  det enda som verifierar runtime-ändringarna automatiskt);
-  `@vscode/test-electron` för mappning och panel.
+- **Tester.** ✅ xunit-projekt med analysatortester och integrationstester
+  mot `mcr.microsoft.com/mssql/server` som service-container i CI
+  (pausmekanik, loopar, abort, exception-stopp, modulläge, TVF).
+  Återstår: `@vscode/test-electron` för mappning och panel. `[S]`
 - **Attach-läge (betaldel).** `[L]` Enligt NOTICE.md; kräver fas 4:s
   heartbeat först.
 
