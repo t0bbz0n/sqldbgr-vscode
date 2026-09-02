@@ -15,6 +15,7 @@ public sealed class DebugRun
     public DebugSessionRunner Runner { get; }
     public InstrumentedScript Script { get; }
     public List<string> Outputs { get; } = [];
+    public List<JsonElement> ResultSets { get; } = [];
 
     private DebugRun(DebugSessionRunner runner, InstrumentedScript script)
     {
@@ -66,6 +67,12 @@ public sealed class DebugRun
             {
                 Outputs.Add(data.GetProperty("text").GetString() ?? "");
                 if (name == "output") return data;
+                continue;
+            }
+            if (evt.Name == "resultset")
+            {
+                ResultSets.Add(data);
+                if (name == "resultset") return data;
                 continue;
             }
             if (evt.Name == name) return data;
