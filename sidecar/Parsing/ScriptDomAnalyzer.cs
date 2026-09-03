@@ -226,7 +226,10 @@ public class ScriptDomAnalyzer
             IsModule = true,
             // Inget prelude kan deklarera en variabel här, och SESSION_CONTEXT
             // sätts mitt i körningen när sessionen fångas - läs den varje gång.
-            Sid = "CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'))"
+            Sid = "CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'))",
+            // Främmande sessioner kör samma kod med NULL som sessions-id, så
+            // ingenting får skrivas förrän grinden sagt att vi ska pausa.
+            CaptureBeforeGate = false
         };
 
         // Modulens egna parametrar är i scope från början och deklareras inte om.
@@ -440,11 +443,12 @@ public class ScriptDomAnalyzer
     {
         var text = new StringBuilder();
         text.AppendLine();
-        text.Append(BuildScalarCapture(ctx));
         // Den dyra delen (tabellvariabler som JSON + proc-anropet) bara när det
         // faktiskt blir en paus - annars kostar varje statement i en loop.
+        if (ctx.CaptureBeforeGate) text.Append(BuildScalarCapture(ctx));
         text.AppendLine($"IF {ctx.Dbg}.ShouldPause({ctx.Sid}, {stmtId}) = 1");
         text.AppendLine("BEGIN");
+        if (!ctx.CaptureBeforeGate) text.Append(BuildScalarCapture(ctx));
         text.Append(BuildTableCapture(ctx));
         text.AppendLine($"    EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
         text.Append(BuildOverridesApply(ctx));
@@ -662,6 +666,12 @@ public class ScriptDomAnalyzer
         /// och SESSION_CONTEXT måste läsas om vid varje statement eftersom den sätts
         /// mitt i körningen (när en främmande session fångas).</summary>
         public string Sid { get; init; } = "@__dbg_sid";
+        /// <summary>Om skalära locals får fångas före grinden. Sant när sessionen
+        /// alltid är vår (då är värdena tillgängliga även om ett statement kastar).
+        /// Falskt vid instrumentering på plats: där kör främmande trafik samma kod
+        /// med NULL som sessions-id, och en ovillkorlig INSERT skulle spränga
+        /// deras anrop.</summary>
+        public bool CaptureBeforeGate { get; init; } = true;
         /// <summary>Modulläge: variabeln som RETURN-uttryck fångas i (null för TVF).</summary>
         public string? ReturnVariable { get; init; }
         public Dictionary<int, int> LineMap { get; } = [];

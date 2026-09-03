@@ -223,6 +223,23 @@ public class AnalyzerTests
     }
 
     [Fact]
+    public void InstrumentInPlace_WritesNothingBeforeTheGate()
+    {
+        // Foreign traffic runs this same code with a NULL session id. An
+        // unconditional capture would fail its INSERT and blow up the
+        // application's call, so nothing may be written before ShouldPause.
+        var sql = "CREATE PROCEDURE dbo.P @a INT AS BEGIN SELECT @a; END";
+        var text = _analyzer.InstrumentModuleInPlace(sql, "/p.sql", "[Db].__dbgpro").Batches[0].Sql;
+        AssertReparses(text);
+        var gate = text.IndexOf("ShouldPause");
+        var firstWrite = text.IndexOf("INSERT INTO [Db].__dbgpro.Locals");
+        Assert.True(gate > 0 && firstWrite > gate,
+            "the locals capture must sit inside the ShouldPause block");
+        Assert.True(text.IndexOf("DELETE FROM [Db].__dbgpro.Locals") > gate,
+            "the delete must sit inside the ShouldPause block too");
+    }
+
+    [Fact]
     public void InstrumentInPlace_ReadsSessionContextInline()
     {
         // Pause sets SESSION_CONTEXT mid-run when it catches a foreign session,
