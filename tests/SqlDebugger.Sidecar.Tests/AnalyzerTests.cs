@@ -232,11 +232,15 @@ public class AnalyzerTests
         var text = _analyzer.InstrumentModuleInPlace(sql, "/p.sql", "[Db].__dbgpro").Batches[0].Sql;
         AssertReparses(text);
         var gate = text.IndexOf("ShouldPause");
+        var claim = text.IndexOf("[Db].__dbgpro.BeginPause");
         var firstWrite = text.IndexOf("INSERT INTO [Db].__dbgpro.Locals");
-        Assert.True(gate > 0 && firstWrite > gate,
-            "the locals capture must sit inside the ShouldPause block");
-        Assert.True(text.IndexOf("DELETE FROM [Db].__dbgpro.Locals") > gate,
-            "the delete must sit inside the ShouldPause block too");
+        Assert.True(gate > 0 && claim > gate,
+            "the claim must sit inside the ShouldPause block");
+        // Nothing may be written until the claim has produced a session id.
+        Assert.True(firstWrite > claim, "the locals capture must follow the claim");
+        Assert.True(text.IndexOf("DELETE FROM [Db].__dbgpro.Locals") > claim,
+            "the delete must follow the claim too");
+        Assert.Contains("IS NOT NULL", text[claim..firstWrite]);
     }
 
     [Fact]

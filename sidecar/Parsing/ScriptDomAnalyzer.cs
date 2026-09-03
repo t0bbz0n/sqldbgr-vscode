@@ -445,13 +445,32 @@ public class ScriptDomAnalyzer
         text.AppendLine();
         // Den dyra delen (tabellvariabler som JSON + proc-anropet) bara när det
         // faktiskt blir en paus - annars kostar varje statement i en loop.
-        if (ctx.CaptureBeforeGate) text.Append(BuildScalarCapture(ctx));
+        if (ctx.CaptureBeforeGate)
+        {
+            text.Append(BuildScalarCapture(ctx));
+            text.AppendLine($"IF {ctx.Dbg}.ShouldPause({ctx.Sid}, {stmtId}) = 1");
+            text.AppendLine("BEGIN");
+            text.Append(BuildTableCapture(ctx));
+            text.AppendLine($"    EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
+            text.Append(BuildOverridesApply(ctx));
+            text.AppendLine("END");
+            return text.ToString();
+        }
+
+        // Instrumentering på plats: sessionen kan vara någon annans och ännu inte
+        // vara märkt. BeginPause gör anspråket och sätter sessions-id; först
+        // därefter finns det något att skriva locals under. Förlorar den kapplöpningen
+        // (eller är det bara vanlig trafik) förblir id:t NULL och vi rör ingenting.
         text.AppendLine($"IF {ctx.Dbg}.ShouldPause({ctx.Sid}, {stmtId}) = 1");
         text.AppendLine("BEGIN");
-        if (!ctx.CaptureBeforeGate) text.Append(BuildScalarCapture(ctx));
+        text.AppendLine($"    EXEC {ctx.Dbg}.BeginPause;");
+        text.AppendLine($"    IF {ctx.Sid} IS NOT NULL");
+        text.AppendLine("    BEGIN");
+        text.Append(BuildScalarCapture(ctx));
         text.Append(BuildTableCapture(ctx));
-        text.AppendLine($"    EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
+        text.AppendLine($"        EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
         text.Append(BuildOverridesApply(ctx));
+        text.AppendLine("    END");
         text.AppendLine("END");
         return text.ToString();
     }
