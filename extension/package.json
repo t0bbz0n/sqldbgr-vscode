@@ -45,7 +45,7 @@
         },
         "sqldbgr.attachExtension": {
           "type": "string",
-          "default": "tobias-trunehag.sqldbgr-attach",
+          "default": "tobias-trunehag.sqldbgr-pro",
           "description": "%config.attachExtension%"
         }
       }

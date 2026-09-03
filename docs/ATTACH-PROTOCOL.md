@@ -5,6 +5,11 @@ session is executing — lives in a **separate extension**, not in this
 repository. This repo is MIT and contains only local debugging; it exposes
 the extension point described here and nothing more.
 
+The implementation is `t0bbz0n/sqldbgr-pro-vscode` (proprietary). It reuses
+`ScriptDomAnalyzer` from this repo with `debugSchema` pointed at its own
+`__dbgpro` schema, which implements the same `Pause`/`ShouldPause` contract
+with inverted gating — so no fork of the instrumenter is needed.
+
 This document is the contract that separate extension implements.
 
 ## Why the split
@@ -24,7 +29,7 @@ Local debugging never passes through it.
 ## 1. Extension API
 
 The provider extension is discovered by id (`sqldbgr.attachExtension`,
-default `tobias-trunehag.sqldbgr-attach`), activated, and its `exports` must
+default `tobias-trunehag.sqldbgr-pro`), activated, and its `exports` must
 satisfy `AttachProviderApi` from `extension/src/attachProvider.ts`:
 
 ```ts

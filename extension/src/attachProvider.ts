@@ -4,7 +4,7 @@ const t = vscode.l10n.t;
 
 /** Protokollversion som den här extensionen talar. Providern måste matcha major. */
 export const ATTACH_PROTOCOL_VERSION = 1;
-const DEFAULT_PROVIDER_ID = 'tobias-trunehag.sqldbgr-attach';
+const DEFAULT_PROVIDER_ID = 'tobias-trunehag.sqldbgr-pro';
 
 /** Vad klienten ber om när en körande session ska fångas. */
 export interface AttachRequest {
