@@ -195,6 +195,64 @@ public class AnalyzerTests
     }
 
     [Fact]
+    public void InstrumentInPlace_KeepsTheModuleAndTurnsCreateIntoAlter()
+    {
+        var sql = """
+            CREATE PROCEDURE dbo.Calc @a INT, @b INT
+            AS
+            BEGIN
+                DECLARE @sum INT;
+                SET @sum = @a + @b;
+                SELECT @sum;
+            END
+            """;
+        var r = _analyzer.InstrumentModuleInPlace(sql, "/p.sql", "[Db].__dbgpro");
+        Assert.Empty(r.Errors);
+        var text = Assert.Single(r.Batches).Sql;
+        AssertReparses(text);
+
+        // ALTER preserves permissions; drop/create would not.
+        Assert.Contains("ALTER PROCEDURE dbo.Calc", text);
+        Assert.DoesNotContain("CREATE PROCEDURE", text);
+        // The body is instrumented in place - no scriptified prelude.
+        Assert.Contains("[Db].__dbgpro.Pause", text);
+        Assert.DoesNotContain("@__p_a", text);
+        // The module's own parameters are in scope without being redeclared.
+        Assert.DoesNotContain("DECLARE @a INT =", text);
+        Assert.Equal(["@a", "@b"], r.ScopeMap[r.LineMap[4]].Select(v => v.Name));
+    }
+
+    [Fact]
+    public void InstrumentInPlace_ReadsSessionContextInline()
+    {
+        // Pause sets SESSION_CONTEXT mid-run when it catches a foreign session,
+        // so a value cached in a variable would stay NULL for the rest of the
+        // module and every later statement would fall through.
+        var sql = "CREATE PROCEDURE dbo.P AS BEGIN SELECT 1; SELECT 2; END";
+        var text = _analyzer.InstrumentModuleInPlace(sql, "/p.sql", "[Db].__dbgpro").Batches[0].Sql;
+        AssertReparses(text);
+        Assert.DoesNotContain("@__dbg_sid UNIQUEIDENTIFIER =", text);
+        Assert.Contains("SESSION_CONTEXT(N'__dbg_session')", text);
+    }
+
+    [Fact]
+    public void InstrumentInPlace_HandlesCreateOrAlter()
+    {
+        var sql = "CREATE OR ALTER PROCEDURE dbo.P AS BEGIN SELECT 1; END";
+        var text = _analyzer.InstrumentModuleInPlace(sql, "/p.sql").Batches[0].Sql;
+        AssertReparses(text);
+        Assert.Contains("ALTER PROCEDURE dbo.P", text);
+        Assert.DoesNotContain("ALTER OR ALTER", text);
+    }
+
+    [Fact]
+    public void InstrumentInPlace_RejectsAScriptWithoutAModule()
+    {
+        var r = _analyzer.InstrumentModuleInPlace("SELECT 1;", "/p.sql");
+        Assert.NotEmpty(r.Errors);
+    }
+
+    [Fact]
     public void ParseErrors_HavePositions()
     {
         var errors = _analyzer.GetParseErrors("SELECT 1;\nSELECT FROM WHERE;");

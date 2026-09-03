@@ -201,6 +201,71 @@ public class ScriptDomAnalyzer
         };
     }
 
+    /// <summary>Instrumenterar en modul PÅ PLATS: hela CREATE/ALTER-texten behålls
+    /// och pauser sprutas bara in i kroppen, så resultatet kan deployas med ALTER
+    /// (som bevarar rättigheter, till skillnad från drop/create). Används av
+    /// attach-läget, där modulen körs av någon annans session.</summary>
+    public InstrumentedScript InstrumentModuleInPlace(string sql, string sourcePath, string debugSchema = "__dbg")
+    {
+        if (ParseScript(sql, out var script, out _) is { } parseFailure)
+            return Empty(sourcePath, parseFailure);
+
+        var module = script!.Batches.SelectMany(b => b.Statements)
+            .FirstOrDefault(s => s is ProcedureStatementBody or TriggerStatementBody);
+        var statementList = module switch
+        {
+            ProcedureStatementBody p => p.StatementList,
+            TriggerStatementBody t => t.StatementList,
+            _ => null
+        };
+        if (module is null || statementList is null)
+            return Empty(sourcePath, ["No procedure or trigger body found to instrument."]);
+
+        var ctx = new Context(sql, debugSchema)
+        {
+            IsModule = true,
+            // Inget prelude kan deklarera en variabel här, och SESSION_CONTEXT
+            // sätts mitt i körningen när sessionen fångas - läs den varje gång.
+            Sid = "CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'))"
+        };
+
+        // Modulens egna parametrar är i scope från början och deklareras inte om.
+        if (module is ProcedureStatementBody proc)
+            foreach (var p in proc.Parameters)
+                ctx.Declared.Add(new DeclaredVariable(
+                    p.VariableName.Value, GetText(sql, p.DataType), IsTable: false));
+
+        var injections = new List<Injection>();
+        foreach (var stmt in statementList.Statements)
+            InstrumentStatement(stmt, injections, ctx);
+
+        // CREATE [OR ALTER] -> ALTER, så deployen behåller modulens rättigheter.
+        var tokens = module.ScriptTokenStream;
+        var keyword = module.FirstTokenIndex;
+        while (keyword <= module.LastTokenIndex
+               && tokens[keyword].TokenType is not (TSqlTokenType.Procedure or TSqlTokenType.Proc or TSqlTokenType.Trigger))
+            keyword++;
+        if (keyword <= module.LastTokenIndex)
+        {
+            var start = tokens[module.FirstTokenIndex].Offset;
+            injections.Add(new Injection(start, tokens[keyword].Offset - start, ctx.NextSeq(), "ALTER "));
+        }
+
+        var batch = Splice(ctx, module.StartOffset, EndOffset(module), injections, Header + "\n");
+
+        return new InstrumentedScript
+        {
+            Batches = [batch],
+            SourcePath = sourcePath,
+            LineMap = ctx.LineMap,
+            StmtToSpan = ctx.StmtToSpan,
+            ScopeMap = ctx.ScopeMap,
+            FinalStmtIds = ctx.FinalStmtIds,
+            ResultVariables = [],
+            Errors = []
+        };
+    }
+
     public InstrumentedScript Instrument(string sql, string sourcePath, string debugSchema = "__dbg")
     {
         if (ParseScript(sql, out var script, out _) is { } parseFailure)
@@ -378,7 +443,7 @@ public class ScriptDomAnalyzer
         text.Append(BuildScalarCapture(ctx));
         // Den dyra delen (tabellvariabler som JSON + proc-anropet) bara när det
         // faktiskt blir en paus - annars kostar varje statement i en loop.
-        text.AppendLine($"IF {ctx.Dbg}.ShouldPause(@__dbg_sid, {stmtId}) = 1");
+        text.AppendLine($"IF {ctx.Dbg}.ShouldPause({ctx.Sid}, {stmtId}) = 1");
         text.AppendLine("BEGIN");
         text.Append(BuildTableCapture(ctx));
         text.AppendLine($"    EXEC {ctx.Dbg}.Pause @stmt_id = {stmtId};");
@@ -487,14 +552,14 @@ public class ScriptDomAnalyzer
     {
         if (ctx.Declared.Count == 0) return string.Empty;
         var sb = new StringBuilder();
-        sb.AppendLine($"DELETE FROM {ctx.Dbg}.Locals WHERE SessionId = @__dbg_sid;");
+        sb.AppendLine($"DELETE FROM {ctx.Dbg}.Locals WHERE SessionId = {ctx.Sid};");
 
         var scalars = ctx.Declared.Select((v, i) => (v, i)).Where(x => !x.v.IsTable).ToList();
         if (scalars.Count == 0) return sb.ToString();
 
         sb.AppendLine($"INSERT INTO {ctx.Dbg}.Locals (SessionId, Ordinal, Name, TypeName, Value) VALUES");
         sb.AppendLine(string.Join(",\n", scalars.Select(x =>
-            $"    (@__dbg_sid, {x.i}, '{x.v.Name}', '{x.v.TypeName.Replace("'", "''")}', {ValueExpression(x.v)})")) + ";");
+            $"    ({ctx.Sid}, {x.i}, '{x.v.Name}', '{x.v.TypeName.Replace("'", "''")}', {ValueExpression(x.v)})")) + ";");
         return sb.ToString();
     }
 
@@ -504,19 +569,21 @@ public class ScriptDomAnalyzer
     /// annars fälla hela statementet vid kompilering.</summary>
     private static string BuildTableCapture(Context ctx)
     {
+        // Inuti sp_executesql är sid alltid parametern; värdet kommer utifrån.
+        const string sidInDynamicSql = "@__dbg_sid";
         var sb = new StringBuilder();
         foreach (var (v, i) in ctx.Declared.Select((v, i) => (v, i)).Where(x => x.v.IsTable))
         {
             var insert = $"""
                 INSERT INTO {ctx.Dbg}.Locals (SessionId, Ordinal, Name, TypeName, Value)
-                SELECT @__dbg_sid, {i}, '{v.Name}',
+                SELECT {sidInDynamicSql}, {i}, '{v.Name}',
                        'TABLE(' + CAST((SELECT COUNT(*) FROM {v.Name}) AS NVARCHAR(20)) + ')',
                        (SELECT TOP ({TableCaptureRows}) * FROM {v.Name} FOR JSON AUTO, INCLUDE_NULL_VALUES);
                 """;
             if (v.IsTempTable)
             {
                 sb.AppendLine($"    IF OBJECT_ID('tempdb..{v.Name}') IS NOT NULL");
-                sb.AppendLine($"        EXEC sp_executesql N'{insert.Replace("'", "''")}', N'@__dbg_sid UNIQUEIDENTIFIER', @__dbg_sid;");
+                sb.AppendLine($"        EXEC sp_executesql N'{insert.Replace("'", "''")}', N'@__dbg_sid UNIQUEIDENTIFIER', {ctx.Sid};");
             }
             else
             {
@@ -533,7 +600,7 @@ public class ScriptDomAnalyzer
         var scalars = ctx.Declared.Where(v => !v.IsTable).ToList();
         if (scalars.Count == 0) return string.Empty;
         var sb = new StringBuilder();
-        sb.AppendLine($"    IF EXISTS (SELECT 1 FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = @__dbg_sid)");
+        sb.AppendLine($"    IF EXISTS (SELECT 1 FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = {ctx.Sid})");
         sb.AppendLine("    BEGIN");
         foreach (var v in scalars)
         {
@@ -541,9 +608,9 @@ public class ScriptDomAnalyzer
             var convert = t.StartsWith("binary") || t.StartsWith("varbinary")
                 ? $"CONVERT({v.TypeName}, Value, 1)"
                 : $"TRY_CONVERT({v.TypeName}, Value)";
-            sb.AppendLine($"        SELECT {v.Name} = {convert} FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = @__dbg_sid AND Name = '{v.Name}';");
+            sb.AppendLine($"        SELECT {v.Name} = {convert} FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = {ctx.Sid} AND Name = '{v.Name}';");
         }
-        sb.AppendLine($"        DELETE FROM {ctx.Dbg}.Overrides WHERE SessionId = @__dbg_sid;");
+        sb.AppendLine($"        DELETE FROM {ctx.Dbg}.Overrides WHERE SessionId = {ctx.Sid};");
         sb.AppendLine("    END");
         return sb.ToString();
     }
@@ -590,6 +657,11 @@ public class ScriptDomAnalyzer
         /// <summary>Kvalificerat schemanamn för __dbg-objekten, t.ex. "[MyDb].__dbg".</summary>
         public string Dbg { get; }
         public bool IsModule { get; init; }
+        /// <summary>Uttryck som ger sessionens id i genererad SQL. Normalt variabeln
+        /// som preludet deklarerar; vid instrumentering på plats finns inget prelude,
+        /// och SESSION_CONTEXT måste läsas om vid varje statement eftersom den sätts
+        /// mitt i körningen (när en främmande session fångas).</summary>
+        public string Sid { get; init; } = "@__dbg_sid";
         /// <summary>Modulläge: variabeln som RETURN-uttryck fångas i (null för TVF).</summary>
         public string? ReturnVariable { get; init; }
         public Dictionary<int, int> LineMap { get; } = [];
