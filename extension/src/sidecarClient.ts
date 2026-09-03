@@ -104,6 +104,17 @@ export class SidecarClient extends EventEmitter {
     return this.post('/inspect', { programPath });
   }
 
+  /**
+   * Kopplar upp mot en session som redan finns i sidecaren (attach-läget:
+   * providern har fångat en körande session åt oss). Ingen ny körning startas.
+   */
+  async resumeSession(sessionId: string): Promise<ParseResult> {
+    const result = await this.get<ParseResult>(`/session/${sessionId}`);
+    this.sessionId = sessionId;
+    this.openEventStream(sessionId);
+    return result;
+  }
+
   /** Parsar och instrumenterar; körningen startar först vid run(). */
   async startSession(req: StartSessionRequest): Promise<ParseResult> {
     const result = await this.post<ParseResult>('/session/start', req);

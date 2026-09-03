@@ -32,6 +32,8 @@ public class DebugSessionRunner
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
 
     public Guid SessionId { get; } = Guid.NewGuid();
+    /// <summary>Radkarta och spans, för klienter som kopplar upp mot en befintlig session.</summary>
+    public InstrumentedScript Script => _script;
     public ChannelReader<SidecarEvent> Events => _events.Reader;
 
     private readonly Channel<SidecarEvent> _events = Channel.CreateUnbounded<SidecarEvent>();

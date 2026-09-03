@@ -17,5 +17,8 @@
   "launch.autoStartSidecar": "Start a sidecar automatically (bundled with the extension). Set false to only use sidecarUrl.",
   "launch.sidecarCommand": "Command that starts the sidecar; --port is appended automatically. Default: the bundled sidecar. During development: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"].",
   "snippet.local": "sqldbgr: debug a T-SQL script locally",
-  "snippet.dryrun": "sqldbgr: debug with rollback (dry run)"
+  "snippet.dryrun": "sqldbgr: debug with rollback (dry run)",
+  "config.attachExtension": "Extension id of the separate, licensed attach provider (see docs/ATTACH-PROTOCOL.md).",
+  "attach.program": "File or virtual document breakpoints are mapped against. Usually chosen by the attach provider.",
+  "snippet.attach": "sqldbgr: attach to a running procedure (requires the attach extension)"
 }

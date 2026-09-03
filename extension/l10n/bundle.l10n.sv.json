@@ -33,5 +33,11 @@
   "the sidecar did not report an address within {0}s - see the \"sqldbgr Sidecar\" output channel.": "sidecaren rapporterade ingen adress inom {0}s - se output-kanalen \"sqldbgr Sidecar\".",
   "the sidecar process exited with code {0}": "sidecar-processen avslutades med kod {0}",
   "the sidecar process exited with code {0} - see the \"sqldbgr Sidecar\" output channel.": "sidecar-processen avslutades med kod {0} - se output-kanalen \"sqldbgr Sidecar\".",
-  "the sidecar did not answer on {0}/health within {1}s.": "sidecaren svarade inte på {0}/health inom {1}s."
+  "the sidecar did not answer on {0}/health within {1}s.": "sidecaren svarade inte på {0}/health inom {1}s.",
+  "sqldbgr: attach mode needs the separate extension {0}, which is not installed.": "sqldbgr: attach-läget kräver den separata extensionen {0}, som inte är installerad.",
+  "sqldbgr: the attach extension could not be activated: {0}": "sqldbgr: attach-extensionen kunde inte aktiveras: {0}",
+  "sqldbgr: {0} does not expose an attach provider.": "sqldbgr: {0} exponerar ingen attach-provider.",
+  "sqldbgr: the attach extension speaks protocol {0}, this version needs {1} - update one of them.": "sqldbgr: attach-extensionen talar protokoll {0}, den här versionen kräver {1} - uppdatera någon av dem.",
+  "sqldbgr: waiting for a call to the watched module…": "sqldbgr: väntar på ett anrop till den bevakade modulen…",
+  "sqldbgr: attach mode needs a \"connectionString\" in the launch configuration.": "sqldbgr: attach-läget kräver en \"connectionString\" i launch-konfigurationen."
 }

@@ -42,6 +42,11 @@
           ],
           "default": "ask",
           "description": "%config.moduleFiles%"
+        },
+        "sqldbgr.attachExtension": {
+          "type": "string",
+          "default": "tobias-trunehag.sqldbgr-attach",
+          "description": "%config.attachExtension%"
         }
       }
     },
@@ -127,6 +132,25 @@
                 "description": "%launch.sidecarCommand%"
               }
             }
+          },
+          "attach": {
+            "required": [
+              "connectionString"
+            ],
+            "properties": {
+              "connectionString": {
+                "type": "string",
+                "description": "%launch.connectionString%"
+              },
+              "program": {
+                "type": "string",
+                "description": "%attach.program%"
+              },
+              "debugDatabase": {
+                "type": "string",
+                "description": "%launch.debugDatabase%"
+              }
+            }
           }
         },
         "initialConfigurations": [
@@ -161,6 +185,16 @@
               "program": "^\"\\${file}\"",
               "connectionString": "Server=(localdb)\\\\MSSQLLocalDB;Database=MyDb;Integrated Security=true;TrustServerCertificate=true",
               "transaction": "rollback"
+            }
+          },
+          {
+            "label": "%snippet.attach%",
+            "description": "%snippet.attach%",
+            "body": {
+              "type": "tsql",
+              "request": "attach",
+              "name": "Attach to a running procedure",
+              "connectionString": "Server=myserver;Database=MyDb;Integrated Security=true;TrustServerCertificate=true"
             }
           }
         ]

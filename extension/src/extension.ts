@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { TsqlDebugSession } from './debugAdapter';
 import { collectParameters } from './parameterPanel';
+import { catchSession, resolveAttachProvider } from './attachProvider';
 import { getResults, renderMarkdown } from './resultStore';
 import { ModuleInfo, SidecarClient } from './sidecarClient';
 import { SidecarManager } from './sidecarManager';
@@ -40,6 +41,12 @@ export function activate(context: vscode.ExtensionContext) {
             config.program = editor.document.fileName;
           }
         }
+        // Attach: en separat, licensierad extension äger mekaniken (se
+        // docs/ATTACH-PROTOCOL.md). Den fångar en körande session och vi
+        // kopplar upp oss mot den - ingen egen sidecar, ingen egen körning.
+        const isAttach = config.request === 'attach' || config.mode === 'attach';
+        if (isAttach) return resolveAttachConfiguration(config);
+
         if (!config.program) {
           vscode.window.showErrorMessage(t('sqldbgr: open a .sql file to debug, or set "program" in launch.json.'));
           return undefined;
@@ -65,13 +72,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
         config.sidecarUrl ??= DEFAULT_SIDECAR_URL; // autoStartSidecar: false utan egen URL
 
-        if (config.mode !== 'attach') {
-          const proceed = await inspectAndPrepare(context, config, diagnostics);
-          if (!proceed) return undefined;
-        }
+        const proceed = await inspectAndPrepare(context, config, diagnostics);
+        if (!proceed) return undefined;
 
-        // --- LICENSED FEATURE BOUNDARY ---
-        // Remote/attach-gating läggs här senare. Lokal debugging går ALDRIG genom licenskod.
         return config;
       }
     })
@@ -80,6 +83,41 @@ export function activate(context: vscode.ExtensionContext) {
   registerCommands(context);
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, new ModuleCodeLensProvider()));
+}
+
+/**
+ * --- LICENSED FEATURE BOUNDARY ---
+ * Allt attach-specifikt ligger bakom det här anropet, i en separat extension
+ * som äger licenskontroll, val av modul, deploy av instrumenterad definition
+ * och återställning. Lokal debugging passerar aldrig den här vägen och
+ * fungerar oförändrat när extensionen inte är installerad.
+ */
+async function resolveAttachConfiguration(
+  config: vscode.DebugConfiguration
+): Promise<vscode.DebugConfiguration | undefined> {
+  if (!config.connectionString) {
+    vscode.window.showErrorMessage(
+      t('sqldbgr: attach mode needs a "connectionString" in the launch configuration.'));
+    return undefined;
+  }
+  const provider = await resolveAttachProvider();
+  if (!provider) return undefined;
+
+  const caught = await catchSession(provider, {
+    connectionString: config.connectionString,
+    program: config.program,
+    debugDatabase: config.debugDatabase
+  });
+  if (!caught) return undefined; // avbrutet eller inget fångat - starta ingen session
+
+  config.request = 'attach';
+  config.mode = 'attach';
+  config.program = caught.program;
+  config.sidecarUrl = caught.sidecarUrl;
+  config.sidecarToken = caught.sidecarToken;
+  config.attachSessionId = caught.sessionId;
+  config.autoStartSidecar = false; // providern äger sin sidecar
+  return config;
 }
 
 /**

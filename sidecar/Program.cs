@@ -146,6 +146,20 @@ app.MapPost("/session/{id:guid}/evaluate", async (Guid id, EvaluateRequest req) 
     return Results.Ok(new { value, error });
 });
 
+// Beskriver en befintlig session. Attach-läget kopplar upp sig mot en session
+// som redan fångats och behöver dess radkarta utan att starta något.
+app.MapGet("/session/{id:guid}", (Guid id) =>
+{
+    if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
+    return Results.Ok(new
+    {
+        sessionId = id,
+        program = runner.Script.SourcePath,
+        lineMap = runner.Script.LineMap.Select(kv => new { line = kv.Key, stmtId = kv.Value }),
+        statements = runner.Script.StmtToSpan.Select(kv => new { stmtId = kv.Key, kv.Value.Line, kv.Value.EndLine })
+    });
+});
+
 app.MapGet("/session/{id:guid}/locals", async (Guid id) =>
 {
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();

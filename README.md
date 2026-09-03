@@ -4,7 +4,8 @@ Breakpoint-debugging för T-SQL i VS Code – sätt breakpoints i `.sql`-filer,
 stega igenom statements, inspektera variabler. Ingen Visual Studio, ingen SSDT.
 
 **Lokal debugging är gratis och kräver ingen licens.** Se `NOTICE.md` för
-gränsen mot betalfunktioner (remote/attach-läge, ej byggt än).
+gränsen mot betalfunktioner: attach-mekaniken ligger i en separat, licensierad
+extension - det här repot har bara extension-punkten som laddar den.
 
 ## Arkitektur
 
@@ -118,9 +119,8 @@ code --install-extension sqldbgr-0.1.0.vsix
 
 (eller Extensions-panelen → `⋯` → *Install from VSIX…*)
 
-För Marketplace-publicering: skapa en publisher på
-marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
-(står som `your-publisher-id`), och kör `npx @vscode/vsce publish`.
+För Marketplace-publicering: `npx @vscode/vsce publish` (kräver en Azure
+DevOps-PAT för publishern i `extension/package.json`).
 
 ## Funktioner i korthet
 
@@ -142,10 +142,14 @@ marketplace.visualstudio.com, byt ut `publisher` i `extension/package.json`
 ## Status / roadmap
 
 Detaljerad plan: se [ROADMAP.md](ROADMAP.md). Kvar: step-into i stored
-procedures, attach-läge (betaldel), extension-tester med `@vscode/test-electron`.
+procedures, attach-mekaniken i sitt separata repo, extension-tester med
+`@vscode/test-electron`.
 
 ## Kända begränsningar just nu
 
+- Attach-läget (pausa i en deployad modul som annan trafik kör) ligger i en
+  separat, licensierad extension - se [docs/ATTACH-PROTOCOL.md](docs/ATTACH-PROTOCOL.md).
+  Utan den fungerar allt annat oförändrat.
 - Pausa inne i en *deployad* modul går inte utan attach-läge; använd
   modulläget (F5 på filen) för att debugga kroppen. Scalar-funktioner kan
   aldrig pausas (UDF:er tillåter inga sidoeffekter).

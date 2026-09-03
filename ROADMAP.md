@@ -130,8 +130,12 @@ i CI, sidecar-loggnivå. Kvar: skärmdumpar/GIF, riktigt publisher-id,
   mot `mcr.microsoft.com/mssql/server` som service-container i CI
   (pausmekanik, loopar, abort, exception-stopp, modulläge, TVF).
   Återstår: `@vscode/test-electron` för mappning och panel. `[S]`
-- **Attach-läge (betaldel).** `[L]` Enligt NOTICE.md; kräver fas 4:s
-  heartbeat först.
+- **Attach-läge (betaldel).** `[L]` Mekaniken ligger i ett separat repo
+  enligt beslut; det här repot har extension-punkten (`attachProvider.ts`,
+  `attachRequest`, `GET /session/{id}`) och kontraktet i
+  docs/ATTACH-PROTOCOL.md. Kvar i det andra repot: bevakningsschema med
+  inverterad spärr och atomär claim, deploy/restore av instrumenterade
+  definitioner, arm-UI, licenskontroll.
 
 ## Medvetna avgränsningar
 

@@ -17,5 +17,8 @@
   "launch.autoStartSidecar": "Starta en egen sidecar automatiskt (buntad i extensionen). Sätt false för att bara använda sidecarUrl.",
   "launch.sidecarCommand": "Kommando som startar sidecaren; --port läggs på automatiskt. Default: den buntade sidecaren. Under utveckling: [\"dotnet\", \"run\", \"--project\", \"${workspaceFolder}/sidecar\", \"--\"].",
   "snippet.local": "sqldbgr: debugga ett T-SQL-script lokalt",
-  "snippet.dryrun": "sqldbgr: debugga med rollback (dry run)"
+  "snippet.dryrun": "sqldbgr: debugga med rollback (dry run)",
+  "config.attachExtension": "Extension-id för den separata, licensierade attach-providern (se docs/ATTACH-PROTOCOL.md).",
+  "attach.program": "Fil eller virtuellt dokument som breakpoints mappas mot. Väljs normalt av attach-providern.",
+  "snippet.attach": "sqldbgr: attacha mot en körande procedur (kräver attach-extensionen)"
 }

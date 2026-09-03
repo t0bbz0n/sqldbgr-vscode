@@ -31,6 +31,8 @@ interface TsqlLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   params?: Record<string, unknown>;
   sidecarUrl?: string;
   sidecarToken?: string;
+  /** Attach: sessionen providern redan fångat; ingen egen körning startas. */
+  attachSessionId?: string;
   stopOnEntry?: boolean;
   transaction?: 'none' | 'rollback' | 'commit';
   debugDatabase?: string;
@@ -99,22 +101,52 @@ export class TsqlDebugSession extends LoggingDebugSession {
       this.sendEvent(new TerminatedEvent());
     });
 
-    const parsed = await this.sidecar.startSession({
-      programPath: args.program,
-      connectionString: args.connectionString,
-      mode: args.mode ?? 'invoke',
-      params: args.params ?? {},
-      transaction: args.transaction ?? 'none',
-      debugDatabase: args.debugDatabase
-    });
+    const parsed = args.attachSessionId
+      ? await this.sidecar.resumeSession(args.attachSessionId)
+      : await this.sidecar.startSession({
+          programPath: args.program,
+          connectionString: args.connectionString,
+          mode: args.mode ?? 'invoke',
+          params: args.params ?? {},
+          transaction: args.transaction ?? 'none',
+          debugDatabase: args.debugDatabase
+        });
     this.mapper.load(args.program, parsed.statements);
+  }
+
+  /**
+   * Attach: attach-providern har redan fångat en körande session som står
+   * pausad i sin sidecar. Vi kopplar bara upp oss - därefter är allt
+   * (breakpoints, locals, stegning) identiskt med en lokal session.
+   */
+  protected async attachRequest(
+    response: DebugProtocol.AttachResponse, args: TsqlLaunchArgs
+  ): Promise<void> {
+    this.launchArgs = args;
+    if (!args.attachSessionId) {
+      this.sendErrorResponse(response, 1004, 'attach: no session was caught');
+      return;
+    }
+    try {
+      await this.startSession();
+      this.sendResponse(response);
+      this.sendEvent(new InitializedEvent());
+      // Sessionen står redan pausad; visa den direkt.
+      this.sendEvent(new StoppedEvent('pause', THREAD_ID));
+    } catch (err) {
+      this.sendErrorResponse(response, 1005,
+        `Could not attach to the caught session: ${(err as Error).message}`);
+    }
   }
 
   protected async configurationDoneRequest(
     response: DebugProtocol.ConfigurationDoneResponse
   ): Promise<void> {
     try {
-      await this.sidecar.run(this.launchArgs.stopOnEntry === true);
+      // Attach: sessionen körs redan (och står pausad) - bara breakpoints skickades.
+      if (!this.launchArgs.attachSessionId) {
+        await this.sidecar.run(this.launchArgs.stopOnEntry === true);
+      }
       this.sendResponse(response);
     } catch (err) {
       this.sendErrorResponse(response, 1002,
@@ -124,6 +156,11 @@ export class TsqlDebugSession extends LoggingDebugSession {
 
   /** Ctrl+Shift+F5: ny session med samma argument och breakpoints, utan omfrågning. */
   protected async restartRequest(response: DebugProtocol.RestartResponse): Promise<void> {
+    if (this.launchArgs.attachSessionId) {
+      this.sendErrorResponse(response, 1006,
+        'Restart is not available when attached to a caught session - detach and arm again.');
+      return;
+    }
     try {
       await this.sidecar.stopSession().catch(() => {});
       this.sidecar.removeAllListeners();
