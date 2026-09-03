@@ -266,6 +266,105 @@ public class RunnerIntegrationTests(SqlServerFixture fixture) : IClassFixture<Sq
     }
 
     [SkippableFact]
+    public async Task ModuleMode_BreakpointInsideProcedureBody()
+    {
+        RequireSqlServer();
+        var proc = """
+            CREATE PROCEDURE dbo.CalcSum @a INT, @b INT = 10, @result INT OUTPUT
+            AS
+            BEGIN
+                DECLARE @sum INT = 0;
+                SET @sum = @a + @b;
+                SET @result = @sum * 2;
+                RETURN 0;
+            END
+            """;
+        // Breakpoint på rad 6 (SET @result) - alltså inuti kroppen, inte ett slutstopp
+        var run = await DebugRun.StartAsync(Cs, proc, [6], mode: "module",
+            parameters: new() { ["@a"] = "5", ["@b"] = "10", ["@result"] = null });
+
+        var (line, reason) = await run.ExpectPausedAsync();
+        Assert.Equal(6, line);
+        Assert.Equal("breakpoint", reason);
+        var atBreakpoint = await run.LocalsAsync();
+        Assert.Equal("15", atBreakpoint["@sum"]);      // raden före har körts
+        Assert.Null(atBreakpoint["@result"]);          // raden vi står på har inte
+
+        await run.Runner.SignalAsync("continue");
+        var (returnLine, _) = await run.ExpectPausedAsync(); // RETURN = tvingat slutstopp
+        Assert.Equal(7, returnLine);
+        var atReturn = await run.LocalsAsync();
+        Assert.Equal("30", atReturn["@result"]);
+        Assert.Equal("0", atReturn["@__dbg_return"]);
+
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
+    public async Task ModuleMode_SteppingThroughProcedureBody()
+    {
+        RequireSqlServer();
+        var proc = """
+            CREATE PROCEDURE dbo.CalcSum @a INT, @b INT = 10, @result INT OUTPUT
+            AS
+            BEGIN
+                DECLARE @sum INT = 0;
+                SET @sum = @a + @b;
+                SET @result = @sum * 2;
+                RETURN 0;
+            END
+            """;
+        var run = await DebugRun.StartAsync(Cs, proc, [], stopOnEntry: true, mode: "module",
+            parameters: new() { ["@a"] = "5", ["@b"] = "10", ["@result"] = null });
+
+        Assert.Equal((4, "entry"), await run.ExpectPausedAsync()); // första statementet i kroppen
+        await run.Runner.SignalAsync("stepOver");
+        Assert.Equal((5, "step"), await run.ExpectPausedAsync());
+        Assert.Equal("0", (await run.LocalsAsync())["@sum"]);
+        await run.Runner.SignalAsync("stepOver");
+        Assert.Equal((6, "step"), await run.ExpectPausedAsync());
+        Assert.Equal("15", (await run.LocalsAsync())["@sum"]);
+        await run.Runner.SignalAsync("stepOver");
+        Assert.Equal((7, "step"), await run.ExpectPausedAsync());
+
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
+    public async Task ModuleMode_ConditionalBreakpointInsideLoopInProcedureBody()
+    {
+        RequireSqlServer();
+        var proc = """
+            CREATE PROCEDURE dbo.CountUp @n INT
+            AS
+            BEGIN
+                DECLARE @i INT = 0;
+                WHILE @i < @n
+                BEGIN
+                    SET @i = @i + 1;
+                END
+            END
+            """;
+        var run = await DebugRun.StartAsync(Cs, proc, [], mode: "module",
+            parameters: new() { ["@n"] = "5" },
+            breakpoints: [new DebugRun.Bp(7, Condition: "@i = 3")]);
+
+        var (line, _) = await run.ExpectPausedAsync();
+        Assert.Equal(7, line);
+        Assert.Equal("3", (await run.LocalsAsync())["@i"]);
+
+        await run.Runner.SignalAsync("continue");
+        var (endLine, _) = await run.ExpectPausedAsync(); // slut på kroppen = tvingat slutstopp
+        Assert.Equal(9, endLine);
+        Assert.Equal("5", (await run.LocalsAsync())["@i"]);
+
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+    }
+
+    [SkippableFact]
     public async Task ModuleMode_TableValuedFunction()
     {
         RequireSqlServer();
