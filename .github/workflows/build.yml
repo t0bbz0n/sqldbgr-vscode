@@ -40,7 +40,31 @@ jobs:
       - name: Run tests
         env:
           SQLDBGR_TEST_CONNECTION: "Server=localhost,1433;User Id=sa;Password=Sqldbgr!Test123;TrustServerCertificate=true;Connect Timeout=10"
-        run: dotnet test tests/SqlDebugger.Sidecar.Tests --logger "console;verbosity=normal"
+        run: >-
+          dotnet test tests/SqlDebugger.Sidecar.Tests
+          --logger "console;verbosity=normal"
+          --logger "trx;LogFileName=results.trx"
+          --results-directory artifacts
+
+      # The integration tests skip themselves when SQLDBGR_TEST_CONNECTION is
+      # missing, and a skipped test is green - so losing the service container
+      # or the env var would turn the half of the suite that touches a real
+      # server into a silent no-op that still passes.
+      - name: Require every test to have run
+        run: |
+          trx=$(ls artifacts/*.trx | head -1)
+          counters=$(grep -o '<Counters[^/]*/>' "$trx")
+          echo "$counters"
+          total=$(sed -n 's/.*[^a-zA-Z]total="\([0-9]*\)".*/\1/p' <<<"$counters")
+          skipped=$(sed -n 's/.*notExecuted="\([0-9]*\)".*/\1/p' <<<"$counters")
+          if [ "${total:-0}" -lt 40 ]; then
+            echo "::error::only ${total:-0} tests ran; the suite has at least 40"
+            exit 1
+          fi
+          if [ "${skipped:-1}" -ne 0 ]; then
+            echo "::error::${skipped} test(s) were skipped - the integration tests must run"
+            exit 1
+          fi
 
   build:
     runs-on: ubuntu-latest
