@@ -113,6 +113,10 @@ BEGIN
     WHILE 1 = 1
     BEGIN
         WAITFOR DELAY '00:00:00.050';
+        -- Nollställ först: SELECT @x = ... utan träff lämnar variabeln orörd, så
+        -- en borttagen kontrollrad skulle annars se ut som oförändrad signal och
+        -- en allt äldre heartbeat - sessionen skulle hänga tills timeouten slog.
+        SET @sig = NULL; SET @hb = NULL;
         SELECT @sig = SignalSeq, @cmd = Command, @hb = LastHeartbeatUtc
         FROM __dbg.Control WITH (NOLOCK) WHERE SessionId = @sid;
         IF @sig IS NULL BREAK;         -- sessionen städad utifrån: släpp igenom
