@@ -50,6 +50,12 @@ jobs:
       # missing, and a skipped test is green - so losing the service container
       # or the env var would turn the half of the suite that touches a real
       # server into a silent no-op that still passes.
+      # Stopping the service container dumps SQL Server's whole startup log,
+      # so a failure ends up hundreds of lines above the end of the job log.
+      - name: Report failed tests
+        if: failure()
+        run: python3 scripts/report-failed-tests.py "artifacts/*.trx"
+
       - name: Require every test to have run
         run: |
           trx=$(ls artifacts/*.trx | head -1)

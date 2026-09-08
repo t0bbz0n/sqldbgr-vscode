@@ -196,6 +196,12 @@ public class RunnerIntegrationTests(SqlServerFixture fixture) : IClassFixture<Sq
         await run.Runner.SetVariableAsync("@sMotnr", "M-2");
         Assert.Equal("M-2", (await run.LocalsAsync())["@sMotnr"]);
 
+        // Modulläge har ett tvingat slutstopp så returvärde och OUTPUT syns
+        // innan sessionen tar slut - SELECT:en har då redan kört.
+        await run.Runner.SignalAsync("continue");
+        var (endLine, _) = await run.ExpectPausedAsync();
+        Assert.Equal(7, endLine);
+
         await run.Runner.SignalAsync("continue");
         await run.ExpectAsync("terminated");
         Assert.Contains(run.Outputs, o => o.Contains("M-2") && o.Contains("12.50"));
