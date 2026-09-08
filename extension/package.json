@@ -2,6 +2,27 @@
   "name": "sqldbgr",
   "displayName": "sqldbgr",
   "description": "Breakpoint debugging for T-SQL scripts and stored procedures in SQL Server.",
+  "license": "MIT",
+  "keywords": [
+    "sql",
+    "t-sql",
+    "tsql",
+    "sql server",
+    "mssql",
+    "debugger",
+    "breakpoint",
+    "stored procedure",
+    "azure sql"
+  ],
+  "homepage": "https://github.com/t0bbz0n/sqldbgr-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/t0bbz0n/sqldbgr-vscode/issues"
+  },
+  "qna": "https://github.com/t0bbz0n/sqldbgr-vscode/issues",
+  "galleryBanner": {
+    "color": "#1F3A5F",
+    "theme": "dark"
+  },
   "version": "0.1.0",
   "publisher": "tobias-trunehag",
   "icon": "media/icon.png",

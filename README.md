@@ -119,8 +119,45 @@ code --install-extension sqldbgr-0.1.0.vsix
 
 (eller Extensions-panelen → `⋯` → *Install from VSIX…*)
 
-För Marketplace-publicering: `npx @vscode/vsce publish` (kräver en Azure
-DevOps-PAT för publishern i `extension/package.json`).
+### Publicera till Marketplace
+
+CI publicerar automatiskt när en `v*`-tagg pushas. Två saker måste finnas på
+plats en gång, och de går bara att göra manuellt:
+
+1. **En publisher** på <https://marketplace.visualstudio.com/manage>, vars id
+   är exakt `tobias-trunehag` - samma som `publisher` i
+   `extension/package.json`. Skapandet kräver ett Microsoft-konto och en
+   Azure DevOps-organisation (den skapas på köpet om du saknar en).
+2. **En Personal Access Token** från Azure DevOps
+   (<https://dev.azure.com> → User settings → Personal access tokens) med
+   *Organization* satt till **All accessible organizations** och scopet
+   **Marketplace → Manage**. Ingenting mindre räcker, och en token som är
+   scopead till en enda organisation ger ett svårtolkat 401.
+   Lägg den som repo-hemligheten `VSCE_PAT`
+   (Settings → Secrets and variables → Actions).
+
+Sedan räcker det med:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+Taggen bygger VSIX:en, publicerar den och skapar GitHub-releasen. Saknas
+`VSCE_PAT` byggs och releasas den ändå - steget säger bara ifrån att det inte
+publicerade, i stället för att fälla releasen.
+
+Att publicera från din egen maskin i stället går lika bra:
+
+```bash
+cd extension
+npm run package
+npx @vscode/vsce publish --packagePath sqldbgr-0.2.0.vsix   # frågar efter PAT
+```
+
+Första publiceringen tar några minuter innan tillägget syns i Marketplace;
+därefter går uppdateringar igenom på under en minut. Versionen måste alltid
+vara högre än den senast publicerade - Marketplace tar inte emot samma version
+två gånger, ens efter att man tagit bort den.
 
 ## Funktioner i korthet
 
