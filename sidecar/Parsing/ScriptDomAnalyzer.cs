@@ -48,7 +48,12 @@ public record LineSegment(int OutStart, int OrigLine, bool Injected);
 /// <summary>1-baserade rad/kolumn-positioner för ett statement i originalfilen.</summary>
 public record StatementSpan(int Line, int Column, int EndLine, int EndColumn);
 
-public record DeclaredVariable(string Name, string TypeName, bool IsTable, bool IsTempTable = false);
+public record DeclaredVariable(
+    string Name, string TypeName, bool IsTable, bool IsTempTable = false,
+    /// <summary>Typen är en aliastyp (CREATE TYPE ... FROM), sysname eller en
+    /// CLR-typ. CONVERT tar bara systemtyper, så sådana får aldrig hamna som
+    /// målptyp i ett CONVERT/TRY_CONVERT.</summary>
+    bool IsUserDefined = false);
 
 /// <summary>Parse-fel med position, för Problems-panelen i klienten.</summary>
 public record ParseIssue(int Line, int Column, string Message);
@@ -146,7 +151,8 @@ public class ScriptDomAnalyzer
         {
             var typeText = GetText(sql, p.DataType);
             prelude.AppendLine($"DECLARE {p.VariableName.Value} {typeText} = {BoundParameterName(p.VariableName.Value)};");
-            declared.Add(new DeclaredVariable(p.VariableName.Value, typeText, IsTable: false));
+            declared.Add(new DeclaredVariable(p.VariableName.Value, typeText, IsTable: false,
+                IsUserDefined: IsUserDefinedType(p.DataType)));
         }
 
         // Returvärde: skalär funktion/proc -> @__dbg_return; multi-statement TVF ->
@@ -158,7 +164,8 @@ public class ScriptDomAnalyzer
             case FunctionStatementBody { ReturnType: ScalarFunctionReturnType scalar }:
                 var returnType = GetText(sql, scalar.DataType);
                 prelude.AppendLine($"DECLARE @__dbg_return {returnType};");
-                declared.Add(new DeclaredVariable("@__dbg_return", returnType, IsTable: false));
+                declared.Add(new DeclaredVariable("@__dbg_return", returnType, IsTable: false,
+                    IsUserDefined: IsUserDefinedType(scalar.DataType)));
                 break;
             case FunctionStatementBody { ReturnType: TableValuedFunctionReturnType tvf }:
                 returnVariable = null;
@@ -236,7 +243,8 @@ public class ScriptDomAnalyzer
         if (module is ProcedureStatementBody proc)
             foreach (var p in proc.Parameters)
                 ctx.Declared.Add(new DeclaredVariable(
-                    p.VariableName.Value, GetText(sql, p.DataType), IsTable: false));
+                    p.VariableName.Value, GetText(sql, p.DataType), IsTable: false,
+                    IsUserDefined: IsUserDefinedType(p.DataType)));
 
         var injections = new List<Injection>();
         foreach (var stmt in statementList.Statements)
@@ -542,7 +550,8 @@ public class ScriptDomAnalyzer
             foreach (var d in decl.Declarations)
             {
                 var typeName = d.DataType is null ? "TABLE" : GetText(ctx.Sql, d.DataType);
-                ctx.Declared.Add(new DeclaredVariable(d.VariableName.Value, typeName, IsTable: d.DataType is null));
+                ctx.Declared.Add(new DeclaredVariable(d.VariableName.Value, typeName, IsTable: d.DataType is null,
+                    IsUserDefined: IsUserDefinedType(d.DataType)));
             }
         }
         else if (stmt is DeclareTableVariableStatement tableDecl)
@@ -628,9 +637,15 @@ public class ScriptDomAnalyzer
         foreach (var v in scalars)
         {
             var t = v.TypeName.ToLowerInvariant();
-            var convert = t.StartsWith("binary") || t.StartsWith("varbinary")
-                ? $"CONVERT({v.TypeName}, Value, 1)"
-                : $"TRY_CONVERT({v.TypeName}, Value)";
+            // CONVERT tar bara systemtyper: TRY_CONVERT(min_aliastyp, ...) är ett
+            // kompileringsfel som fäller hela batchen. Tilldelning konverterar
+            // ändå implicit till variabelns egen typ, så aliastyper får den vägen
+            // - och ett värde som inte ryms blir ett tydligt fel i stället för NULL.
+            var convert = v.IsUserDefined
+                ? "Value"
+                : t.StartsWith("binary") || t.StartsWith("varbinary")
+                    ? $"CONVERT({v.TypeName}, Value, 1)"
+                    : $"TRY_CONVERT({v.TypeName}, Value)";
             sb.AppendLine($"        SELECT {v.Name} = {convert} FROM {ctx.Dbg}.Overrides WITH (NOLOCK) WHERE SessionId = {ctx.Sid} AND Name = '{v.Name}';");
         }
         sb.AppendLine($"        DELETE FROM {ctx.Dbg}.Overrides WHERE SessionId = {ctx.Sid};");
@@ -642,6 +657,10 @@ public class ScriptDomAnalyzer
     /// språkberoende "Jan 31 2024"), binärt som hex (stil 1), övrigt TRY_CONVERT.</summary>
     private static string ValueExpression(DeclaredVariable v)
     {
+        // En aliastyp kan heta vad som helst - "datum" säger inget om bastypen -
+        // så gissa inte på namnet. Målet är NVARCHAR(MAX), en systemtyp, så
+        // TRY_CONVERT är giltigt oavsett vad källan är.
+        if (v.IsUserDefined) return $"TRY_CONVERT(NVARCHAR(MAX), {v.Name})";
         var t = v.TypeName.ToLowerInvariant();
         if (t.StartsWith("date") || t.StartsWith("time") || t.StartsWith("smalldatetime"))
             return $"CONVERT(NVARCHAR(MAX), {v.Name}, 126)";
@@ -649,6 +668,12 @@ public class ScriptDomAnalyzer
             return $"CONVERT(NVARCHAR(MAX), {v.Name}, 1)";
         return $"TRY_CONVERT(NVARCHAR(MAX), {v.Name})";
     }
+
+    /// <summary>Allt som inte är en inbyggd systemtyp: aliastyper (CREATE TYPE
+    /// ... FROM), sysname - som också är en aliastyp - och CLR-typer. ScriptDom
+    /// ger dem alla som UserDataTypeReference.</summary>
+    private static bool IsUserDefinedType(DataTypeReference? dataType) =>
+        dataType is UserDataTypeReference;
 
     private static InstrumentedScript Empty(string sourcePath, List<string> errors) => new()
     {

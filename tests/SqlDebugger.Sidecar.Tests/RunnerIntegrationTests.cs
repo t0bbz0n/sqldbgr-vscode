@@ -159,6 +159,48 @@ public class RunnerIntegrationTests(SqlServerFixture fixture) : IClassFixture<Sq
         Assert.Contains(run.Outputs, o => o.Contains("return value = 7") && o.Contains("@result = 15"));
     }
 
+    /// <summary>Aliastyper (CREATE TYPE ... FROM) är vanliga i äldre scheman.
+    /// De går att DECLARE:a men CONVERT tar bara systemtyper, så en genererad
+    /// TRY_CONVERT(min_typ, ...) fällde hela batchen redan vid kompileringen.</summary>
+    [SkippableFact]
+    public async Task ModuleMode_UserDefinedAliasTypes()
+    {
+        RequireSqlServer();
+        await using (var conn = new SqlConnection(Cs))
+            await conn.ExecuteAsync("""
+                IF TYPE_ID('pv_motnr') IS NULL CREATE TYPE pv_motnr FROM VARCHAR(20) NULL;
+                IF TYPE_ID('pv_amount') IS NULL CREATE TYPE pv_amount FROM DECIMAL(18, 2) NULL;
+                """);
+
+        var proc = """
+            CREATE PROCEDURE dbo.AliasTyped @sMotnr pv_motnr, @amount dbo.pv_amount, @sName sysname
+            AS
+            BEGIN
+                DECLARE @local pv_motnr;
+                SET @local = @sMotnr;
+                SELECT @local AS motnr, @amount AS amount, @sName AS name;
+            END
+            """;
+        var run = await DebugRun.StartAsync(Cs, proc, [5], mode: "module",
+            parameters: new() { ["@sMotnr"] = "M-1", ["@amount"] = "12.50", ["@sName"] = "dbo" });
+
+        var (line, _) = await run.ExpectPausedAsync();
+        Assert.Equal(5, line);
+        var locals = await run.LocalsAsync();
+        Assert.Equal("M-1", locals["@sMotnr"]);
+        Assert.Equal("12.50", locals["@amount"]);
+        Assert.Equal("dbo", locals["@sName"]);
+
+        // Overrides är den väg som genererade CONVERT till aliastypen. Assignment
+        // konverterar implicit till variabelns egen typ.
+        await run.Runner.SetVariableAsync("@sMotnr", "M-2");
+        Assert.Equal("M-2", (await run.LocalsAsync())["@sMotnr"]);
+
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+        Assert.Contains(run.Outputs, o => o.Contains("M-2") && o.Contains("12.50"));
+    }
+
     [SkippableFact]
     public async Task PauseInsideUserTransaction_DoesNotDeadlock()
     {

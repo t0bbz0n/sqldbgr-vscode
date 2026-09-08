@@ -28,6 +28,30 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Utan detta plockar VS Code ordet under muspekaren med sin egen ordgräns, och
+  // den räknar inte '@' som en del av ordet: att hovra över @sMotnr frågade efter
+  // "sMotnr", som aldrig finns i scope. Samma sak för temptabellernas '#'.
+  context.subscriptions.push(
+    vscode.languages.registerEvaluatableExpressionProvider('sql', {
+      provideEvaluatableExpression(document, position) {
+        const line = document.lineAt(position.line).text;
+        // Variabelnamn: @x, @@ROWCOUNT, #tmp, ##global. Sök ut från pekaren i
+        // stället för att lita på ordgränsen.
+        let start = position.character;
+        while (start > 0 && /[\w$#@]/.test(line[start - 1])) start--;
+        let end = position.character;
+        while (end < line.length && /[\w$#@]/.test(line[end])) end++;
+        if (start === end) return undefined;
+
+        const word = line.slice(start, end);
+        // Prefixet måste sitta först: "a@b" är inte en variabel.
+        if (!/^[@#][\w$#@]*$/.test(word)) return undefined;
+        return new vscode.EvaluatableExpression(
+          new vscode.Range(position.line, start, position.line, end), word);
+      }
+    })
+  );
+
   context.subscriptions.push(
     vscode.debug.registerDebugConfigurationProvider('tsql', {
       async resolveDebugConfiguration(_folder, config) {
