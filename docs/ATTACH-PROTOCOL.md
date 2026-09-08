@@ -58,8 +58,12 @@ cancelled or the watch expired without a catch. Everything in between —
 license check, picking the module, filters, deploying the instrumented
 definition, arming, catching — is the provider's business and invisible here.
 
-The provider owns all of its UI. It should honour the cancellation token,
-since this extension shows a cancellable progress notification while waiting.
+The provider owns all of its UI, including any progress notification: this
+extension shows none of its own, because the flow starts with the provider
+asking which module to watch and a "waiting for a call" notification over that
+picker describes something that has not begun. The provider must therefore
+give the user a way to cancel at every step, and must honour the cancellation
+token it is passed - the host cancels it when the debug session goes away.
 
 ## 2. Sidecar HTTP protocol
 

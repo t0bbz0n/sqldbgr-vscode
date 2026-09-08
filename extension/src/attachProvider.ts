@@ -83,13 +83,18 @@ export async function resolveAttachProvider(): Promise<AttachProviderApi | undef
 }
 
 /** Kör providerns attach-flöde med en avbrytbar progress-notis. */
-export function catchSession(
+export async function catchSession(
   api: AttachProviderApi,
   request: AttachRequest
-): Thenable<AttachSession | undefined> {
-  return vscode.window.withProgress({
-    location: vscode.ProgressLocation.Notification,
-    title: t('sqldbgr: waiting for a call to the watched module…'),
-    cancellable: true
-  }, (_progress, token) => api.attach(request, token));
+): Promise<AttachSession | undefined> {
+  // No progress notification here: the provider owns the whole flow, and it
+  // starts by asking which module to watch. A notification saying "waiting for
+  // a call" on top of that picker describes something that has not begun.
+  // The token is still ours, so cancelling the debug session cancels the watch.
+  const cancellation = new vscode.CancellationTokenSource();
+  try {
+    return await api.attach(request, cancellation.token);
+  } finally {
+    cancellation.dispose();
+  }
 }
