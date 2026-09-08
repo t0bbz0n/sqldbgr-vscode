@@ -154,9 +154,23 @@ CI publicerar på `v*`-taggar när en app-registrering finns. Tre steg, alla i
    tenant. Anteckna *Application (client) ID* och *Directory (tenant) ID*.
 2. **Certificates & secrets → Federated credentials → Add credential**,
    scenariot *GitHub Actions deploying Azure resources*:
-   - Organization `t0bbz0n`, Repository `sqldbgr-vscode`
+   - Organization `t0bbz0n` (id `706990`), Repository `sqldbgr-vscode`
+     (id `1333055433`)
    - Entity type **Environment**, namn `release`
    - Ingen client secret skapas - hela poängen är att det inte finns någon.
+
+   Fyll i id-fälten. Det här repot skickar GitHubs *immutable* subject, där
+   id:na ingår, och en credential utan dem matchar då aldrig. Mätt, inte gissat
+   - kör workflowet **Show the OIDC subject** (Actions → Run workflow) så
+   skriver det ut exakt vad GitHub skickar. Rätt värde här är:
+
+   ```
+   repo:t0bbz0n@706990/sqldbgr-vscode@1333055433:environment:release
+   ```
+
+   Id:na är oföränderliga, vilket är poängen: byter du namn på repot eller
+   kontot fortsätter credentialen fungera, medan den som tar över det lediga
+   namnet inte kan låtsas vara du.
 
    Just **Environment**, inte Tag: Azure matchar credentialens *subject* exakt
    och har inga jokertecken, så en Tag-credential skulle behöva skapas om för
