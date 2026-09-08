@@ -121,43 +121,80 @@ code --install-extension sqldbgr-0.1.0.vsix
 
 ### Publicera till Marketplace
 
-CI publicerar automatiskt när en `v*`-tagg pushas. Två saker måste finnas på
-plats en gång, och de går bara att göra manuellt:
+Ingen Personal Access Token behövs, och det är med flit: Azure DevOps
+pensionerar globala PAT:ar **1 december 2026**, och Microsoft styr om till
+Microsoft Entra ID. Vi använder därför en *federerad* inloggning - GitHub
+lämnar en kortlivad OIDC-token som Azure litar på, så ingenting långlivat
+lagras i repot.
 
-1. **En publisher** på <https://marketplace.visualstudio.com/manage>, vars id
-   är exakt `tobias-trunehag` - samma som `publisher` i
-   `extension/package.json`. Skapandet kräver ett Microsoft-konto och en
-   Azure DevOps-organisation (den skapas på köpet om du saknar en).
-2. **En Personal Access Token** från Azure DevOps
-   (<https://dev.azure.com> → User settings → Personal access tokens) med
-   *Organization* satt till **All accessible organizations** och scopet
-   **Marketplace → Manage**. Ingenting mindre räcker, och en token som är
-   scopead till en enda organisation ger ett svårtolkat 401.
-   Lägg den som repo-hemligheten `VSCE_PAT`
-   (Settings → Secrets and variables → Actions).
+#### Första publiceringen, från din egen maskin
 
-Sedan räcker det med:
+Enklast, och kräver ingenting i Azure alls - du loggar in som dig själv:
+
+```bash
+az login --allow-no-subscriptions        # samma Microsoft-konto som äger publishern
+cd extension
+npm run package
+npx @vscode/vsce publish --azure-credential --packagePath sqldbgr-0.2.0.vsix
+```
+
+`--allow-no-subscriptions` behövs eftersom kontot inte äger någon Azure-
+prenumeration; inloggningen ska bara ge en identitet, inga resurser.
+
+Innan det fungerar måste publishern finnas på
+<https://marketplace.visualstudio.com/manage>, med id:t exakt
+`tobias-trunehag` - samma som `publisher` i `extension/package.json`.
+
+#### Publicera från CI
+
+CI publicerar på `v*`-taggar när en app-registrering finns. Tre steg, alla i
+<https://portal.azure.com> under **Microsoft Entra ID → App registrations**:
+
+1. **New registration** - valfritt namn (t.ex. `sqldbgr-publisher`), single
+   tenant. Anteckna *Application (client) ID* och *Directory (tenant) ID*.
+2. **Certificates & secrets → Federated credentials → Add credential**,
+   scenariot *GitHub Actions deploying Azure resources*:
+   - Organization `t0bbz0n`, Repository `sqldbgr-vscode`
+   - Entity type **Environment**, namn `release`
+   - Ingen client secret skapas - hela poängen är att det inte finns någon.
+
+   Just **Environment**, inte Tag: Azure matchar credentialens *subject* exakt
+   och har inga jokertecken, så en Tag-credential skulle behöva skapas om för
+   varje release. Publiceringsjobbet kör därför i GitHub-environmentet
+   `release`, vilket ger ett stabilt subject som alla `v*`-taggar matchar.
+   Environmentet skapar sig självt vid första körningen; vill du ha en manuell
+   grind före publicering lägger du en *required reviewer* på det under
+   Settings → Environments.
+3. **Lägg till appen som medlem av publishern** på
+   <https://marketplace.visualstudio.com/manage> → publishern → *Members* →
+   lägg till app-registreringens namn. Utan det steget lyckas inloggningen men
+   `publish` nekas.
+
+Lägg sedan `AZURE_CLIENT_ID` och `AZURE_TENANT_ID` som repo-hemligheter
+(Settings → Secrets and variables → Actions) och tagga:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-Taggen bygger VSIX:en, publicerar den och skapar GitHub-releasen. Saknas
-`VSCE_PAT` byggs och releasas den ändå - steget säger bara ifrån att det inte
-publicerade, i stället för att fälla releasen.
+Saknas `AZURE_CLIENT_ID` byggs och releasas taggen ändå - publiceringssteget
+säger bara ifrån, i stället för att fälla releasen.
 
-Att publicera från din egen maskin i stället går lika bra:
+#### På väg: trusted publishing
 
-```bash
-cd extension
-npm run package
-npx @vscode/vsce publish --packagePath sqldbgr-0.2.0.vsix   # frågar efter PAT
-```
+`vsce publish --oidc` tar bort även app-registreringen: GitHub-repot och
+workflowet registreras direkt som betrodd utgivare på Marketplace, precis som
+npm:s och PyPI:s trusted publishing. Det är dokumenterat i vsce:s README men
+finns ännu inte i någon släppt version (kontrollerat mot 3.9.2 och
+prereleaserna 3.9.3-*). När det släpps blir CI-steget en rad utan hemligheter
+alls.
 
-Första publiceringen tar några minuter innan tillägget syns i Marketplace;
-därefter går uppdateringar igenom på under en minut. Versionen måste alltid
-vara högre än den senast publicerade - Marketplace tar inte emot samma version
-två gånger, ens efter att man tagit bort den.
+#### Att veta
+
+Versionen måste alltid vara högre än den senast publicerade - Marketplace tar
+inte emot samma version två gånger, ens efter att man tagit bort den. Första
+publiceringen tar några minuter innan tillägget syns; därefter går
+uppdateringar igenom på under en minut.
 
 ## Funktioner i korthet
 

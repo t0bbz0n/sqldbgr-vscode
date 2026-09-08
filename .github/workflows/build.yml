@@ -74,6 +74,8 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # creating the release
     steps:
       - uses: actions/checkout@v4
 
@@ -134,23 +136,6 @@ jobs:
           path: extension/*.vsix
           if-no-files-found: error
 
-      # Publishing needs a publisher on the Marketplace whose id matches
-      # package.json's "publisher", and an Azure DevOps PAT with the
-      # Marketplace > Manage scope stored as the VSCE_PAT secret. Without the
-      # secret a tag still builds and releases on GitHub - it just says why it
-      # did not publish, rather than failing the release.
-      - name: Publish to the VS Code Marketplace
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        working-directory: extension
-        run: |
-          if [ -z "$VSCE_PAT" ]; then
-            echo "::warning::VSCE_PAT is not set - skipping the Marketplace publish. See README."
-            exit 0
-          fi
-          npx -y @vscode/vsce publish --packagePath *.vsix
-
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -159,3 +144,53 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             extension/*.vsix sidecar-npm/*.tgz \
             --title "$GITHUB_REF_NAME" --generate-notes
+
+  # Separate job so it can declare an environment. Azure matches a federated
+  # credential's subject exactly - there are no wildcards - so a per-tag
+  # credential is impractical and "repo:.../environment:release" is what makes
+  # any v* tag match one credential.
+  #
+  # No Personal Access Token: Azure DevOps retires global PATs on 2026-12-01,
+  # and a federated credential means nothing long-lived is stored here at all.
+  # GitHub hands azure/login a short-lived OIDC token, Azure trusts it because
+  # of the federated credential, and vsce exchanges the resulting Entra token
+  # for a Marketplace credential. Setup is in README.md.
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sqldbgr-vsix-*
+          merge-multiple: true
+          path: vsix
+
+      - name: Check publishing credentials
+        id: publishing
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if [ -n "$AZURE_CLIENT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AZURE_CLIENT_ID is not set - skipping the Marketplace publish. See README."
+          fi
+
+      - name: Sign in to Azure
+        if: steps.publishing.outputs.ready == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          # The identity exists to publish, not to own resources.
+          allow-no-subscriptions: true
+
+      - name: Publish to the VS Code Marketplace
+        if: steps.publishing.outputs.ready == 'true'
+        run: npx -y @vscode/vsce publish --azure-credential --packagePath vsix/*.vsix
