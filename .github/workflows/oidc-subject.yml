@@ -1,11 +1,10 @@
-# Prints the subject GitHub actually puts in the OIDC token, so the Azure
-# federated credential can be filled in from fact rather than from guesswork.
+# Prints the claims GitHub actually puts in the OIDC token, so a trusted
+# publishing policy can be filled in from fact rather than from guesswork.
 #
-# The name-based subject (repo:owner/repo:...) and GitHub's newer immutable one
-# (repo:owner@1234/repo@5678:...) are both real, the immutable form is opt-in,
-# and Azure's form happily generates whichever you type. A credential whose
-# subject differs by one character never matches, and the only symptom is an
-# opaque AADSTS failure at release time - long after the mistake was made.
+# The audience is the Marketplace's, matching what `vsce publish --oidc` asks
+# for. workflow_ref and job_workflow_ref are what a policy pins - a policy that
+# differs by one character never matches, and the only symptom is a failed
+# token exchange at release time, long after the mistake was made.
 #
 # Run from Actions -> "Show the OIDC subject" -> Run workflow.
 name: Show the OIDC subject
@@ -16,8 +15,6 @@ on:
 jobs:
   subject:
     runs-on: ubuntu-latest
-    # Must match the publish job, since the environment is part of the subject.
-    environment: release
     permissions:
       id-token: write
     steps:
@@ -25,14 +22,15 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const token = await core.getIDToken('api://AzureADTokenExchange');
+            const token = await core.getIDToken('marketplace.visualstudio.com');
             // Only the claims that matter are printed - never the token, which
             // is a credential in its own right.
             const claims = JSON.parse(
               Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
             for (const key of ['sub', 'repository', 'repository_id',
                                'repository_owner', 'repository_owner_id',
+                               'workflow_ref', 'job_workflow_ref',
                                'environment', 'iss', 'aud']) {
               core.info(`${key.padEnd(22)} ${claims[key] ?? '(absent)'}`);
             }
-            core.notice(`Subject to enter in Azure: ${claims.sub}`);
+            core.notice(`Subject: ${claims.sub}`);

@@ -145,24 +145,25 @@ jobs:
             extension/*.vsix sidecar-npm/*.tgz \
             --title "$GITHUB_REF_NAME" --generate-notes
 
-  # Separate job so it can declare an environment. Azure matches a federated
-  # credential's subject exactly - there are no wildcards - so a per-tag
-  # credential is impractical and "repo:.../environment:release" is what makes
-  # any v* tag match one credential.
+  # Trusted publishing: GitHub's OIDC token is exchanged directly for a
+  # Marketplace credential. No Personal Access Token (Azure DevOps retires
+  # global PATs on 2026-12-01), and no Entra app registration, federated
+  # credential or Azure DevOps user either - the parts that turned out to be
+  # unworkable for a publisher owned by a personal Microsoft account.
   #
-  # No Personal Access Token: Azure DevOps retires global PATs on 2026-12-01,
-  # and a federated credential means nothing long-lived is stored here at all.
-  # GitHub hands azure/login a short-lived OIDC token, Azure trusts it because
-  # of the federated credential, and vsce exchanges the resulting Entra token
-  # for a Marketplace credential. Setup is in README.md.
+  # It needs a trusted publishing policy for this repository and workflow on
+  # the Marketplace publisher page. Setup is in README.md.
+  #
+  # Pinned to a prerelease on purpose: --oidc is implemented but unannounced,
+  # and PR #1297 hides it from `vsce publish --help`, so `latest` (3.9.2) does
+  # not have it at all. Move to `latest` once 3.9.3 ships.
   publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: read
-      id-token: write
+      id-token: write   # the OIDC token - nothing long-lived is stored here
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -170,27 +171,5 @@ jobs:
           merge-multiple: true
           path: vsix
 
-      - name: Check publishing credentials
-        id: publishing
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        run: |
-          if [ -n "$AZURE_CLIENT_ID" ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::AZURE_CLIENT_ID is not set - skipping the Marketplace publish. See README."
-          fi
-
-      - name: Sign in to Azure
-        if: steps.publishing.outputs.ready == 'true'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          # The identity exists to publish, not to own resources.
-          allow-no-subscriptions: true
-
       - name: Publish to the VS Code Marketplace
-        if: steps.publishing.outputs.ready == 'true'
-        run: npx -y @vscode/vsce publish --azure-credential --packagePath vsix/*.vsix
+        run: npx -y @vscode/vsce@3.9.3-12 publish --oidc --packagePath vsix/*.vsix

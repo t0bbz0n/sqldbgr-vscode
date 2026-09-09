@@ -142,26 +142,35 @@ Microsoft Entra ID - samma mekanism Microsoft flyttar allt till - fast med
 *dig* som identitet i stället för en service principal. Därför krävs ingen
 app-registrering, ingen federerad credential och ingen Azure DevOps-användare.
 
-#### Varför inte publicera från CI
+#### Publicera från CI
 
-Det går, men kostnaden är hög just nu. En service principal måste läggas till
-som användare i Azure DevOps-organisationen bakom publishern och därefter som
-medlem av publishern, och för en publisher som ägs av ett personligt
-Microsoft-konto verkar det inte gå alls - se
+CI publicerar på `v*`-taggar med **trusted publishing**: GitHubs OIDC-token
+byts direkt mot en Marketplace-credential. Ingen PAT, ingen app-registrering,
+ingen federerad credential, ingen Azure DevOps-användare - inget långlivat
+lagras i repot alls.
+
+Det som behövs är en *trusted publishing policy* för det här repot och
+workflowet på publisher-sidan
+(<https://marketplace.visualstudio.com/manage>). Behöver du veta exakt vad
+GitHub skickar, kör workflowet **Show the OIDC subject** (Actions → Run
+workflow) - det skriver ut `repository`, `workflow_ref` och `job_workflow_ref`,
+alltså precis det en policy pinnar. Bara de claimsen skrivs ut, aldrig token,
+som är en credential i sig.
+
+`--oidc` är implementerad men **oannonserad**: den är medvetet dold från
+`vsce publish --help` ([PR #1297](https://github.com/microsoft/vscode-vsce/pull/1297)),
+och finns inte i `latest` (3.9.2) - bara i prereleaserna. Workflowet pinnar
+därför `@vscode/vsce@3.9.3-12`; byt till `latest` när 3.9.3 släpps. Att den är
+oannonserad betyder också att Marketplace-sidan kan sakna gränssnittet för att
+registrera en policy ännu. Går det inte fungerar `npm run release` ovan
+oförändrat under tiden.
+
+Service principal-vägen (Entra-app + federerad credential) är övergiven med
+flit: den kräver att appen läggs till som användare i Azure DevOps-
+organisationen bakom publishern, och för en publisher som ägs av ett
+personligt Microsoft-konto verkar det inte gå - se
 [vsce#1023](https://github.com/microsoft/vscode-vsce/issues/1023), rapporterat
 och stängt utan svar.
-
-Workflowet har jobbet kvar och det hoppar över publiceringen när
-`AZURE_CLIENT_ID` saknas, så en tagg bygger VSIX:en och skapar
-GitHub-releasen ändå. Sätter du hemligheterna någon gång tar CI över
-publiceringen; gör du inte det krockar ingenting.
-
-Det som faktiskt löser CI-fallet är `vsce publish --oidc` - *trusted
-publishing*, där repot och workflowet registreras direkt som betrodd utgivare
-på Marketplace, precis som hos npm och PyPI. Ingen app-registrering, ingen
-Azure DevOps, inga hemligheter. Det är dokumenterat i vsce:s README men finns
-ännu inte i någon släppt version (kontrollerat mot 3.9.2 och prereleaserna
-3.9.3-*). När det släpps blir CI-steget en rad och det här avsnittet kortare.
 
 #### Att veta
 
