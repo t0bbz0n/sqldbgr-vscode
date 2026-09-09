@@ -237,6 +237,17 @@ tests with `@vscode/test-electron`.
   is not shown, because the counters are polluted by the instrumentation's own
   INSERT/DELETE.
 
+## The website
+
+[t0bbz0n.github.io/sqldbgr-vscode](https://t0bbz0n.github.io/sqldbgr-vscode/)
+is a single static page in [site/](site/), published by
+`.github/workflows/pages.yml` on every push that touches it. It lives here
+rather than in the Pro repository because GitHub Pages cannot serve a public
+site from a private one, and because the page should be readable by people who
+have not bought anything.
+
+Turn it on once under Settings → Pages → Source → **GitHub Actions**.
+
 ## Contributing
 
 Bug reports and pull requests are welcome. See

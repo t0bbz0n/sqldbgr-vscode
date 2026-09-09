@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sqldbgr — breakpoint debugging for T-SQL in VS Code</title>
+<meta name="description" content="Set breakpoints in .sql files, step through statements and inspect variables, without Visual Studio or SSDT.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🐞</text></svg>">
+<meta property="og:title" content="sqldbgr — breakpoint debugging for T-SQL in VS Code">
+<meta property="og:description" content="Set breakpoints in .sql files, step through statements and inspect variables, without Visual Studio or SSDT.">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfd;
+    --panel: #ffffff;
+    --ink: #16181d;
+    --muted: #5b6270;
+    --line: #e3e6ec;
+    --accent: #0d6efd;
+    --accent-ink: #ffffff;
+    --code-bg: #f4f5f8;
+    --pro: #7a4de8;
+    --shadow: 0 1px 2px rgba(16, 20, 30, .06), 0 8px 24px rgba(16, 20, 30, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116;
+      --panel: #161b22;
+      --ink: #e7ebf0;
+      --muted: #9aa4b2;
+      --line: #262d38;
+      --accent: #4d94ff;
+      --accent-ink: #08111f;
+      --code-bg: #10151c;
+      --pro: #b18cff;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); }
+  h1, h2, h3 { line-height: 1.25; letter-spacing: -.015em; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); padding: .15em .4em; border-radius: 4px; font-size: .9em; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header.top .wrap {
+    display: flex; align-items: center; gap: 20px;
+    height: 60px;
+  }
+  .brand { font-weight: 650; letter-spacing: -.02em; font-size: 17px; text-decoration: none; color: var(--ink); }
+  .brand span { color: var(--muted); font-weight: 400; }
+  header.top nav { margin-left: auto; display: flex; gap: 20px; font-size: 14.5px; }
+  header.top nav a { color: var(--muted); text-decoration: none; }
+  header.top nav a:hover { color: var(--ink); }
+  @media (max-width: 620px) { header.top nav a.hide-narrow { display: none; } }
+
+  .hero { padding: 72px 0 56px; }
+  .hero h1 { font-size: clamp(32px, 5.5vw, 46px); margin: 0 0 18px; }
+  .hero p.lede { font-size: 19px; color: var(--muted); margin: 0 0 12px; max-width: 62ch; }
+  .hero p.free { font-size: 16px; margin: 0 0 28px; max-width: 62ch; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-block; padding: 11px 20px; border-radius: 8px;
+    text-decoration: none; font-weight: 550; font-size: 15px;
+    border: 1px solid transparent;
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { border-color: var(--line); color: var(--ink); background: var(--panel); }
+  .note { font-size: 14px; color: var(--muted); margin-top: 14px; }
+
+  section { padding: 48px 0; border-top: 1px solid var(--line); }
+  section h2 { font-size: 26px; margin: 0 0 8px; }
+  section > .wrap > p.sub { color: var(--muted); margin: 0 0 28px; max-width: 66ch; }
+
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 6px; font-size: 16.5px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  .flow { display: grid; gap: 10px; }
+  .step {
+    display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: start;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .step b { display: block; }
+  .step .n {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--code-bg); border: 1px solid var(--line);
+    display: grid; place-items: center; font-size: 14px; font-weight: 600; color: var(--muted);
+  }
+  .step p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  td.tick { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  td.pro { color: var(--pro); font-weight: 600; white-space: nowrap; }
+  td.no { color: var(--muted); }
+  .table-scroll { overflow-x: auto; }
+
+  ul.plain { margin: 0; padding-left: 20px; color: var(--muted); }
+  ul.plain li { margin-bottom: 8px; }
+  ul.plain strong { color: var(--ink); font-weight: 600; }
+
+  footer {
+    border-top: 1px solid var(--line); padding: 32px 0 56px;
+    color: var(--muted); font-size: 14.5px;
+  }
+  footer a { color: var(--muted); }
+  footer .row { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top">sqldbgr <span>for VS Code</span></a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#how" class="hide-narrow">How it works</a>
+      <a href="#editions">Editions</a>
+      <a href="https://github.com/t0bbz0n/sqldbgr-vscode">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div id="top" class="wrap hero">
+  <h1>Breakpoint debugging for T-SQL, in VS Code.</h1>
+  <p class="lede">
+    Set breakpoints in a <code>.sql</code> file, press F5, and step through the
+    statements while you watch the variables change. No Visual Studio, no SSDT.
+  </p>
+  <p class="free">
+    Local debugging is free and open source under the MIT licence.
+  </p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/t0bbz0n/sqldbgr-vscode/releases">Download the VSIX</a>
+    <a class="btn ghost" href="https://github.com/t0bbz0n/sqldbgr-vscode">Read the source</a>
+  </div>
+  <p class="note">
+    Not on the Marketplace yet. Until it is, grab the VSIX from the releases page
+    and install it with <em>Extensions → ⋯ → Install from VSIX…</em>
+  </p>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <h2>What you get</h2>
+    <p class="sub">
+      The things a debugger has to do, done against a real SQL Server rather
+      than a simulation of one.
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3>Breakpoints that behave</h3>
+        <p>Conditional breakpoints, hit counts and logpoints. A breakpoint
+        inside a multi-line statement hits that statement; one on a blank line
+        snaps down to the next.</p>
+      </div>
+      <div class="card">
+        <h3>Locals worth reading</h3>
+        <p>Scalars, table variables and temp tables as expandable trees. Hover a
+        variable to see it, put it in Watch, or change its value while paused.</p>
+      </div>
+      <div class="card">
+        <h3>Pause before, not after</h3>
+        <p>The highlighted statement is the one about to run, and Locals shows
+        the state before it runs. The same convention every other debugger uses.</p>
+      </div>
+      <div class="card">
+        <h3>Module mode</h3>
+        <p>Press F5 on a <code>CREATE PROCEDURE</code> file and debug the body
+        with a parameter form. Return values and OUTPUT parameters are reported
+        at the end.</p>
+      </div>
+      <div class="card">
+        <h3>Dry runs</h3>
+        <p>Wrap the whole session in a transaction and roll it back when you are
+        done, so you can debug against real data without changing it.</p>
+      </div>
+      <div class="card">
+        <h3>Errors that point somewhere</h3>
+        <p>A SQL error stops on the failing line with Locals intact. Parse
+        errors go to the Problems panel instead of a dialog.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">
+      There is no secret debugging API in SQL Server. The trick is that your
+      script is rewritten before it runs.
+    </p>
+    <div class="flow">
+      <div class="step">
+        <div class="n">1</div>
+        <div>
+          <b>Your script is parsed and instrumented</b>
+          <p>Microsoft's own T-SQL parser finds the statement boundaries, and a
+          call to a small pause procedure is spliced in between them.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <div>
+          <b>The batch blocks at a breakpoint</b>
+          <p>The pause procedure waits inside SQL Server on the connection
+          running your batch, which is what makes the stop real rather than
+          simulated.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <div>
+          <b>A second connection watches and reports</b>
+          <p>It notices the pause, captures the variables in scope, and tells VS
+          Code. Stepping is a signal back the other way.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <div>
+          <b>Nothing is left behind</b>
+          <p>The bookkeeping lives in a <code>__dbg</code> schema, which can be
+          pointed at another database if you have no rights to create objects in
+          the one you are debugging.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="editions">
+  <div class="wrap">
+    <h2>Free, and Pro</h2>
+    <p class="sub">
+      Everything you need to debug your own code is free. The paid part is the
+      one that touches somebody else's traffic.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Capability</th><th>Free</th><th>Pro</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Breakpoints, stepping, Locals, hover and Watch</td><td class="tick">Yes</td><td class="tick">Yes</td></tr>
+          <tr><td>Module mode: debug a procedure body with parameters</td><td class="tick">Yes</td><td class="tick">Yes</td></tr>
+          <tr><td>Conditional breakpoints, hit counts, logpoints</td><td class="tick">Yes</td><td class="tick">Yes</td></tr>
+          <tr><td>Transaction dry runs</td><td class="tick">Yes</td><td class="tick">Yes</td></tr>
+          <tr>
+            <td><b>Attach:</b> pause inside a deployed procedure that another application is calling</td>
+            <td class="no">—</td><td class="pro">Pro</td>
+          </tr>
+          <tr>
+            <td><b>Attach to triggers:</b> catch a table trigger as it fires</td>
+            <td class="no">—</td><td class="pro">Pro</td>
+          </tr>
+          <tr>
+            <td>Filter which caller gets caught, by login, application or host</td>
+            <td class="no">—</td><td class="pro">Pro</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">
+      Pro is a separate extension that the free one loads. Install it and attach
+      appears in the same debugger; leave it out and everything else works
+      unchanged.
+    </p>
+  </div>
+</section>
+
+<section id="honest">
+  <div class="wrap">
+    <h2>What it will not do</h2>
+    <p class="sub">
+      Worth knowing before you install it, rather than after.
+    </p>
+    <ul class="plain">
+      <li><strong>It rewrites what runs.</strong> The instrumented script is not
+      byte-for-byte the script you wrote. Statements are unchanged; pause calls
+      are added between them.</li>
+      <li><strong>A pause holds locks.</strong> A statement stopped mid-batch
+      keeps whatever it has taken. That matters on a shared server, and it is
+      why attach mode has a hard limit on how long it will hold a caller.</li>
+      <li><strong>Scalar functions can never be paused.</strong> A UDF is not
+      allowed side effects, so it cannot call anything that waits.</li>
+      <li><strong>sqlcmd mode is not supported</strong> — no <code>:r</code>,
+      <code>:setvar</code> or <code>GO n</code>.</li>
+      <li><strong>Row counts are not shown.</strong> The instrumentation does
+      its own inserts, which pollutes them, and a wrong count is worse than
+      none.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <a href="https://github.com/t0bbz0n/sqldbgr-vscode">Source</a>
+      <a href="https://github.com/t0bbz0n/sqldbgr-vscode/releases">Releases</a>
+      <a href="https://github.com/t0bbz0n/sqldbgr-vscode/issues">Report a bug</a>
+      <a href="https://github.com/t0bbz0n/sqldbgr-vscode/blob/main/.github/CONTRIBUTING.md">Contributing</a>
+      <a href="https://github.com/t0bbz0n/sqldbgr-vscode/blob/main/ROADMAP.md">Roadmap</a>
+    </div>
+    <div>
+      The free extension is MIT licensed. Pro is a separate, proprietary
+      extension and needs a licence key.
+      SQL Server and VS Code are Microsoft products; this project is not
+      affiliated with Microsoft.
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
