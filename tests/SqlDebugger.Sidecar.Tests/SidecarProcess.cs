@@ -19,6 +19,7 @@ public sealed class SidecarProcess : IAsyncDisposable
 {
     private readonly Process _process;
     private readonly HttpClient _client;
+    private readonly HttpClient _stream;
     private readonly List<string> _output;
 
     public string Url { get; }
@@ -32,8 +33,13 @@ public sealed class SidecarProcess : IAsyncDisposable
         _output = output;
         Url = url;
         Token = token;
-        _client = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromMinutes(2) };
+        // Kort timeout: varje vanligt anrop ska falla snabbt och peka ut sig
+        // självt i stället för att stalla hela jobbet.
+        _client = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromSeconds(30) };
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        // Händelseströmmen är långlivad med flit och styrs av sin egen token.
+        _stream = new HttpClient { BaseAddress = new Uri(url), Timeout = Timeout.InfiniteTimeSpan };
+        _stream.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
     public static async Task<SidecarProcess> StartAsync()
@@ -69,14 +75,19 @@ public sealed class SidecarProcess : IAsyncDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        // Ingen byggtid här - DLL:en är redan byggd - så väntan får vara kort.
-        var timeout = Task.Delay(TimeSpan.FromSeconds(60));
-        if (await Task.WhenAny(url.Task, timeout) == timeout)
+        // Ingen byggtid här - DLL:en är redan byggd - så väntan får vara kort,
+        // och en process som dör vid start ska rapporteras direkt i stället för
+        // att tigas ihjäl tills timeouten går ut.
+        var timeout = Task.Delay(TimeSpan.FromSeconds(30));
+        var exited = process.WaitForExitAsync();
+        var finished = await Task.WhenAny(url.Task, exited, timeout);
+        if (finished != url.Task)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* redan borta */ }
-            lock (output)
-                throw new InvalidOperationException(
-                    "sidecaren skrev aldrig SQLDBGR_SIDECAR_URL:\n" + string.Join("\n", output));
+            var why = finished == exited
+                ? $"sidecaren avslutades med kod {process.ExitCode} innan den skrev sin URL"
+                : "sidecaren skrev aldrig SQLDBGR_SIDECAR_URL inom 30s";
+            lock (output) throw new InvalidOperationException($"{why}:\n" + string.Join("\n", output));
         }
 
         return new SidecarProcess(process, await url.Task, token, output);
@@ -123,7 +134,7 @@ public sealed class SidecarProcess : IAsyncDisposable
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/session/{sessionId}/events");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await _stream.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -182,6 +193,7 @@ public sealed class SidecarProcess : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _client.Dispose();
+        _stream.Dispose();
         try { _process.Kill(entireProcessTree: true); } catch { /* redan borta */ }
         try { await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); } catch { /* strunt i det */ }
         _process.Dispose();
