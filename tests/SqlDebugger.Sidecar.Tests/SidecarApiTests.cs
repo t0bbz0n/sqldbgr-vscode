@@ -15,7 +15,8 @@ public class SidecarApiTests(SqlServerFixture fixture) : IClassFixture<SqlServer
     private string Cs => fixture.ConnectionString ?? throw new InvalidOperationException();
     private void RequireSqlServer() => Skip.If(fixture.ConnectionString is null, "SQLDBGR_TEST_CONNECTION är inte satt");
 
-    private record StartResponse(Guid SessionId);
+    private record StatementSpan(int StmtId, int Line, int EndLine);
+    private record StartResponse(Guid SessionId, StatementSpan[] Statements);
     private record Local(string Name, string TypeName, string? Value);
     private record EvaluateResponse(string? Value, string? Error);
     private record HealthResponse(string Status, string Service, string Version);
@@ -67,11 +68,23 @@ public class SidecarApiTests(SqlServerFixture fixture) : IClassFixture<SqlServer
         });
         var session = started.SessionId;
 
-        // Breakpoints sätts före /run - det är hela poängen med att start och
-        // run är skilda åt.
+        // Breakpoints skickas som stmtId, inte radnummer: sidecaren returnerar
+        // spans från parsen och extensionen snappar raden till ett statement
+        // själv (breakpointMapper.ts). Att skicka en rad hit tystar bara ner
+        // sig till stmtId 0.
+        var onLineTwo = Assert.Single(started.Statements, st => st.Line == 2);
         await sidecar.PostAsync($"/session/{session}/breakpoints", new
         {
-            breakpoints = new[] { new { line = 2, condition = (string?)null, hitCondition = (string?)null, logMessage = (string?)null } }
+            breakpoints = new[]
+            {
+                new
+                {
+                    stmtId = onLineTwo.StmtId,
+                    condition = (string?)null,
+                    hitCondition = (string?)null,
+                    logMessage = (string?)null
+                }
+            }
         });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
