@@ -1,225 +1,249 @@
 # sqldbgr
 
-Breakpoint-debugging för T-SQL i VS Code – sätt breakpoints i `.sql`-filer,
-stega igenom statements, inspektera variabler. Ingen Visual Studio, ingen SSDT.
+[![build](https://github.com/t0bbz0n/sqldbgr-vscode/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/t0bbz0n/sqldbgr-vscode/actions/workflows/build.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
+[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 
-**Lokal debugging är gratis och kräver ingen licens.** Se `NOTICE.md` för
-gränsen mot betalfunktioner: attach-mekaniken ligger i en separat, licensierad
-extension - det här repot har bara extension-punkten som laddar den.
+Breakpoint debugging for T-SQL in VS Code. Set breakpoints in `.sql` files,
+step through statements, inspect variables. No Visual Studio, no SSDT.
 
-## Arkitektur
+**Local debugging is free and needs no licence.** See [NOTICE.md](NOTICE.md)
+for where the paid boundary is: the attach mechanism lives in a separate,
+licensed extension, and this repository only holds the extension point that
+loads it.
+
+## Architecture
 
 ```
 VS Code (extension, TS)  ──DAP──►  debugAdapter.ts
                                         │ HTTP + SSE
                                         ▼
                               sidecar (C#, ASP.NET minimal API)
-                                        │ 1. ScriptDom-parse + instrumentering
-                                        │ 2. exekverar batch (connection A)
-                                        │ 3. övervakar __dbg.Control (connection B)
+                                        │ 1. ScriptDom parse + instrumentation
+                                        │ 2. runs the batch (connection A)
+                                        │ 3. watches __dbg.Control (connection B)
                                         ▼
                                    SQL Server
-                              __dbg.Pause blockerar batchen
-                              tills klienten signalerar
+                              __dbg.Pause blocks the batch
+                              until the client signals
 ```
 
-## Komma igång (utveckling)
+## Getting started (development)
 
-Förutsättningar: .NET 8 SDK, Node 20+, en lokal SQL Server ((localdb) räcker).
+Prerequisites: .NET 8 SDK, Node 20+, and a local SQL Server ((localdb) is
+enough).
 
 ```bash
 cd extension
 npm install
 npm run compile
-# Öppna extension/ i VS Code, F5 -> Extension Development Host
+# Open extension/ in VS Code, F5 -> Extension Development Host
 ```
 
-I dev-hosten: öppna en `.sql`-fil, sätt breakpoints, F5. Körningen stannar
-på breakpoints (eller på första statementet med `stopOnEntry: true`); det
-highlightade statementet är det som körs härnäst och Locals visar läget
-innan det körs. `PRINT`, resultatmängder och SQL-fel hamnar i Debug Console;
-ett SQL-fel stannar på den felande raden så Locals kan inspekteras. Efter
-sista statementet finns ett virtuellt stopp (vid stegning) som visar
-slutläget. Ingen launch.json behövs - saknas `connectionString` hämtas den från settingen
-`sqldbgr.connectionString`, och finns inte den heller frågar
-extensionen efter en vid start (med erbjudande att spara i settings).
-Vill man styra mer skapar man en launch-konfiguration av typen `tsql`
-(snippet finns).
+In the development host: open a `.sql` file, set breakpoints, press F5. The
+run stops on breakpoints, or on the first statement with `stopOnEntry: true`.
+The highlighted statement is the one about to run, and Locals shows the state
+before it runs. `PRINT`, result sets and SQL errors go to the Debug Console; a
+SQL error stops on the failing line so Locals can be inspected. After the last
+statement there is a virtual stop, when stepping, that shows the final state.
 
-### Sidecaren startar automatiskt
+No launch.json is needed. With no `connectionString` the extension reads the
+`sqldbgr.connectionString` setting, and if that is missing too it asks for one
+at startup and offers to save it. For more control, create a launch
+configuration of type `tsql`; a snippet is provided.
 
-Ingen backend behöver startas för hand, och ingen .NET behöver vara
-installerad: vid F5 probar extensionen `sidecarUrl` (`/health`) och startar
-annars sidecaren själv. Startkommandot väljs i ordning:
+### The sidecar starts itself
 
-1. `sidecarCommand` från launch-konfigurationen (dev-override, se nedan)
-2. Den **buntade sidecaren i VSIX:en** (`extension/sidecar-dist/`), körd med
-   en ASP.NET Core 8-runtime som [.NET Install Tool-extensionen]
-   (ms-dotnettools.vscode-dotnet-runtime, ett extension-beroende) laddar ner
-   automatiskt vid första körningen. Finns runtimen redan svarar den direkt.
-   Utan Install Tool (t.ex. i dev-hosten) provas systemets `dotnet`.
-3. `npx -y sqldbgr-sidecar` (npm-paketet i `sidecar-npm/`) - fallback
-   när ingen buntad sidecar finns. Kör `npm run bundle-sidecar` i
-   `extension/` för att slippa den i dev-hosten.
+No backend has to be started by hand, and no .NET has to be installed. On F5
+the extension probes `sidecarUrl` (`/health`) and otherwise starts the sidecar
+itself. The start command is chosen in this order:
 
-Processen ägs av extensionen och städas undan när den avaktiveras; en
-sidecar man startat själv rörs aldrig. Loggarna hamnar i output-kanalen
-**sqldbgr Sidecar**.
+1. `sidecarCommand` from the launch configuration (a development override, see
+   below).
+2. The **sidecar bundled in the VSIX** (`extension/sidecar-dist/`), run against
+   an ASP.NET Core 8 runtime that the [.NET Install Tool
+   extension](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.vscode-dotnet-runtime)
+   downloads on first use. That extension is a declared dependency. If the
+   runtime is already present it answers immediately. Without the Install Tool,
+   for example in the development host, the system `dotnet` is tried.
+3. `npx -y sqldbgr-sidecar`, the npm package in `sidecar-npm/`, as a fallback
+   when no bundled sidecar is present. Run `npm run bundle-sidecar` in
+   `extension/` to avoid it in the development host.
 
-Under utveckling (opublicerat paket / lokala ändringar) pekar man om
-startkommandot i launch-konfigurationen:
+The process is owned by the extension and cleaned up when it deactivates. A
+sidecar you started yourself is never touched. Its log goes to the **sqldbgr
+Sidecar** output channel.
+
+During development, against an unpublished package or local changes, point the
+start command somewhere else in the launch configuration:
 
 ```jsonc
 {
   "type": "tsql",
   // ...
   "sidecarCommand": ["dotnet", "run", "--project", "${workspaceFolder}/sidecar", "--"],
-  // eller stäng av helt och kör `dotnet run` själv:
+  // or turn it off entirely and run `dotnet run` yourself:
   "autoStartSidecar": false
 }
 ```
 
-Publicering av sidecar-paketet: `cd sidecar-npm && npm publish`
-(prepack kör `dotnet publish` till `dist/`).
+To publish the sidecar package: `cd sidecar-npm && npm publish` (prepack runs
+`dotnet publish` into `dist/`).
 
-## Tester
+## Tests
 
 ```bash
 cd tests/SqlDebugger.Sidecar.Tests
-dotnet test                                    # enhetstester (analysatorn)
+dotnet test                                    # unit tests (the analyzer)
 SQLDBGR_TEST_CONNECTION="Server=localhost;User Id=sa;Password=...;TrustServerCertificate=true" \
-  dotnet test                                  # + integrationstester mot SQL Server
+  dotnet test                                  # + integration tests against SQL Server
 ```
 
-Integrationstesterna skapar databasen `sqldbgr_test` och kör hela
-pausmekaniken (breakpoints, stegning, loopar, abort, exception-stopp,
-modulläge) mot servern. CI kör dem mot `mcr.microsoft.com/mssql/server`
-som service-container på varje push.
+The integration tests create the `sqldbgr_test` database and drive the whole
+pause mechanism against a real server: breakpoints, stepping, loops, abort,
+stopping on an exception, module mode and the HTTP surface the extension uses.
+CI runs them against `mcr.microsoft.com/mssql/server` on every push, and fails
+the build if any test skips itself, because a skipped integration test proves
+nothing.
 
-## Installera i VS Code
+## Installing in VS Code
 
-CI (`.github/workflows/build.yml`) bygger VSIX:en på varje push - ladda ner
-den under **Actions → körningen → Artifacts**. Taggas en `v*`-tagg skapas en
-GitHub-release med VSIX:en och sidecar-npm-tarballen bifogade.
+CI (`.github/workflows/build.yml`) builds the VSIX on every push. Download it
+under **Actions → the run → Artifacts**. Pushing a `v*` tag creates a GitHub
+release with the VSIX and the sidecar npm tarball attached.
 
-Versionering: varje CI-bygge får `major.minor` från `extension/package.json`
-plus run-numret som patch (t.ex. `0.1.7`), stämplat i VSIX, npm-paket och
-sidecar-DLL - `GET /health` svarar med versionen, så det syns exakt vilket
-bygge som kör. Vid `v*`-taggar används taggens version rakt av.
+Versioning: every CI build takes `major.minor` from `extension/package.json`
+and the run number as the patch, for example `0.1.7`, stamped into the VSIX,
+the npm package and the sidecar DLL. `GET /health` answers with that version,
+so it is always clear which build is running. On a `v*` tag the tag's version
+is used as is.
 
-För att bygga och installera lokalt:
+To build and install locally:
 
 ```bash
 cd extension
 npm install
 npm run compile
-npm run package                                     # bundlar sidecaren + vsce package
+npm run package                                     # bundles the sidecar + vsce package
 code --install-extension sqldbgr-0.1.0.vsix
 ```
 
-(eller Extensions-panelen → `⋯` → *Install from VSIX…*)
+Or use the Extensions panel → `⋯` → *Install from VSIX…*
 
-### Publicera till Marketplace
+### Publishing to the Marketplace
 
 ```bash
-az login --allow-no-subscriptions    # en gång, med kontot som äger publishern
+az login --allow-no-subscriptions    # once, with the account that owns the publisher
 cd extension
-npm run release                      # 0.1.0 -> 0.1.1, bygger, publicerar, taggar
+npm run release                      # 0.1.0 -> 0.1.1, builds, publishes, tags
 ```
 
-`npm run release -- minor`, `-- major` eller `-- 1.0.0` för andra hopp,
-`--no-push` om du vill titta på commiten först.
+Use `npm run release -- minor`, `-- major` or `-- 1.0.0` for other jumps, and
+`--no-push` to inspect the commit first.
 
-Scriptet vägrar köra på ett smutsigt träd, kontrollerar inloggningen *innan*
-det höjer versionen, och rullar tillbaka höjningen om publiceringen fallerar -
-Marketplace tar aldrig emot samma version två gånger, så en kvarlämnad höjning
-efter ett misslyckande får nästa försök att se ut som en dubblett av något som
-aldrig publicerades.
+The script refuses to run on a dirty tree, checks the login *before* bumping
+the version, and rolls the bump back if publishing fails. The Marketplace never
+accepts the same version twice, so a bump left behind after a failure makes the
+next attempt look like a duplicate of something that was never published.
 
-Ingen Personal Access Token är inblandad, och det är med flit: Azure DevOps
-pensionerar globala PAT:ar **1 december 2026**. `--azure-credential` använder
-Microsoft Entra ID - samma mekanism Microsoft flyttar allt till - fast med
-*dig* som identitet i stället för en service principal. Därför krävs ingen
-app-registrering, ingen federerad credential och ingen Azure DevOps-användare.
+No Personal Access Token is involved, and that is deliberate: Azure DevOps
+retires global PATs on **1 December 2026**. `--azure-credential` uses Microsoft
+Entra ID, the mechanism Microsoft is moving everything to, but with *you* as
+the identity rather than a service principal. That is why no app registration,
+federated credential or Azure DevOps user is needed.
 
-#### Publicera från CI
+#### Publishing from CI
 
-Inte tillgängligt än, och det är mätt snarare än gissat. `vsce publish --oidc`
-(*trusted publishing*) byter GitHubs OIDC-token direkt mot en
-Marketplace-credential - ingen PAT, ingen app-registrering, ingen Azure
-DevOps. Klientsidan finns och fungerar, men servern gör det inte:
+Not available yet, and that is measured rather than assumed. `vsce publish
+--oidc` (*trusted publishing*) exchanges GitHub's OIDC token directly for a
+Marketplace credential: no PAT, no app registration, no Azure DevOps. The
+client side exists and works. The server side does not:
 
 ```
 POST https://marketplace.visualstudio.com/_apis/gallery/token
 HTTP 404 - The controller for path '/_apis/gallery/token' was not found
 ```
 
-Kör workflowet **Check trusted publishing** (Actions → Run workflow) för att se
-om det ändrats. Det gör exakt samma utbyte som `vsce` gör och rapporterar bara
-statuskoden - ingenting publiceras och inget versionsnummer förbrukas, vilket
-spelar roll eftersom Marketplace aldrig tar emot samma version två gånger.
+Run the **Check trusted publishing** workflow (Actions → Run workflow) to see
+whether that has changed. It performs exactly the exchange `vsce` performs and
+reports only the status code. Nothing is published and no version number is
+spent, which matters because the Marketplace never accepts the same version
+twice.
 
-Publiceringsjobbet i `build.yml` är redan skrivet och avstängt bakom
-repo-variabeln `TRUSTED_PUBLISHING`. När utbytet svarar 200: sätt den till
-`true` (Settings → Secrets and variables → Actions → Variables) så publicerar
-taggar automatiskt. Tills dess bygger en tagg VSIX:en och skapar
-GitHub-releasen som vanligt, utan ett rött kryss för något som ändå inte kan
-lyckas.
+The publish job in `build.yml` is already written, and switched off behind the
+repository variable `TRUSTED_PUBLISHING`. Once the exchange answers 200, set it
+to `true` under Settings → Secrets and variables → Actions → Variables and tags
+will publish automatically. Until then a tag builds the VSIX and creates the
+GitHub release as usual, without a red cross for something that cannot succeed
+anyway.
 
-`--oidc` är för övrigt medvetet dold från `vsce publish --help`
-([PR #1297](https://github.com/microsoft/vscode-vsce/pull/1297)) och saknas
-helt i `latest` (3.9.2) - workflowet pinnar därför `@vscode/vsce@3.9.3-12`.
+Incidentally, `--oidc` is deliberately hidden from `vsce publish --help`
+([PR #1297](https://github.com/microsoft/vscode-vsce/pull/1297)) and missing
+entirely from `latest` (3.9.2), so the workflow pins `@vscode/vsce@3.9.3-12`.
 
-Service principal-vägen (Entra-app + federerad credential) är övergiven med
-flit: den kräver att appen läggs till som användare i Azure DevOps-
-organisationen bakom publishern, och för en publisher som ägs av ett
-personligt Microsoft-konto verkar det inte gå - se
-[vsce#1023](https://github.com/microsoft/vscode-vsce/issues/1023), rapporterat
-och stängt utan svar.
+The service principal route, an Entra app with a federated credential, was
+abandoned on purpose. It requires the app to be added as a user in the Azure
+DevOps organisation behind the publisher, and for a publisher owned by a
+personal Microsoft account that does not appear to be possible. See
+[vsce#1023](https://github.com/microsoft/vscode-vsce/issues/1023), reported and
+closed without an answer.
 
-#### Att veta
+#### Worth knowing
 
-Versionen måste alltid vara högre än den senast publicerade - Marketplace tar
-inte emot samma version två gånger, ens efter att man tagit bort den. Första
-publiceringen tar några minuter innan tillägget syns; därefter går
-uppdateringar igenom på under en minut.
+The version must always be higher than the last published one. The Marketplace
+does not accept the same version twice, not even after you remove it. The first
+publish takes a few minutes before the extension appears; after that updates go
+through in under a minute.
 
-## Funktioner i korthet
+## Features at a glance
 
-- Breakpoints (även villkorliga, med träffräkning och logpoints), stegning,
-  Pause, Restart utan omfrågning
-- Locals: skalärer, tabellvariabler och temp-tabeller som expanderbara träd;
-  hover och Watch; ändra variabelvärden under paus (`setVariable`)
-- Modulläge: F5 på `CREATE PROCEDURE/FUNCTION` debuggar kroppen med
-  parameterpanel; returvärde/OUTPUT rapporteras; CodeLens ovanför definitionen
-- Transaktionsläge `transaction: rollback|commit` ("dry run")
-- `PRINT`, resultatmängder och SQL-fel i Debug Console; kommandot *Open last
-  result set* visar resultat i full bredd; parse-fel i Problems-panelen
-- Anslutning via mssql-extensionens profiler eller inputruta, sparad säkert i
-  SecretStorage; `debugDatabase` för miljöer utan DDL-rätt
-- Sidecaren buntad i VSIX:en, egen per fönster på slumpport, token-autentiserad;
-  .NET-runtime hämtas automatiskt
-- UI på engelska med svensk översättning (`l10n/`)
+- Breakpoints, including conditional ones with hit counts and logpoints;
+  stepping; Pause; Restart without being asked again.
+- Locals: scalars, table variables and temp tables as expandable trees; hover
+  and Watch; changing a variable's value while paused (`setVariable`).
+- Module mode: F5 on a `CREATE PROCEDURE/FUNCTION` debugs the body with a
+  parameter panel; the return value and OUTPUT parameters are reported; a
+  CodeLens sits above the definition.
+- Transaction mode `transaction: rollback|commit`, a dry run.
+- `PRINT`, result sets and SQL errors in the Debug Console; the *Open last
+  result set* command shows results at full width; parse errors go to the
+  Problems panel.
+- Connections from the mssql extension's profiles or from an input box, stored
+  safely in SecretStorage; `debugDatabase` for environments without DDL rights
+  in the target database.
+- The sidecar is bundled in the VSIX, one per window on a random port,
+  token-authenticated; the .NET runtime is fetched automatically.
+- English UI with a Swedish translation (`l10n/`).
 
-## Status / roadmap
+## Status and roadmap
 
-Detaljerad plan: se [ROADMAP.md](ROADMAP.md). Kvar: step-into i stored
-procedures, attach-mekaniken i sitt separata repo, extension-tester med
-`@vscode/test-electron`.
+The detailed plan is in [ROADMAP.md](ROADMAP.md). Still to come: step-into for
+stored procedures, the attach mechanism in its own repository, and extension
+tests with `@vscode/test-electron`.
 
-## Kända begränsningar just nu
+## Known limitations
 
-- Attach-läget (pausa i en deployad modul som annan trafik kör) ligger i en
-  separat, licensierad extension - se [docs/ATTACH-PROTOCOL.md](docs/ATTACH-PROTOCOL.md).
-  Utan den fungerar allt annat oförändrat.
-- Pausa inne i en *deployad* modul går inte utan attach-läge; använd
-  modulläget (F5 på filen) för att debugga kroppen. Scalar-funktioner kan
-  aldrig pausas (UDF:er tillåter inga sidoeffekter).
-- Modulläget kör kroppen som en batch: `RETURN` skrivs om och avslutar
-  batchen. Refererar kroppen sig själv rekursivt måste modulen redan finnas.
-- sqlcmd-läge (`:r`, `:setvar`, `GO n`) stöds inte. "(n rows affected)"
-  visas inte (räknarna förorenas av instrumenteringens egna INSERT/DELETE).
+- Attach mode, pausing inside a deployed module that other traffic is calling,
+  lives in a separate licensed extension. See
+  [docs/ATTACH-PROTOCOL.md](docs/ATTACH-PROTOCOL.md). Without it everything
+  else works unchanged.
+- Pausing inside a *deployed* module is not possible without attach mode. Use
+  module mode, F5 on the file, to debug the body. Scalar functions can never be
+  paused, because a UDF allows no side effects.
+- Module mode runs the body as a batch: `RETURN` is rewritten and ends the
+  batch. If the body calls itself recursively, the module must already exist.
+- sqlcmd mode (`:r`, `:setvar`, `GO n`) is not supported. "(n rows affected)"
+  is not shown, because the counters are polluted by the instrumentation's own
+  INSERT/DELETE.
 
-## Licens
+## Contributing
 
-MIT – se `LICENSE` och `NOTICE.md`.
+Bug reports and pull requests are welcome. See
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) for how to build, test and submit
+changes, and [SECURITY.md](.github/SECURITY.md) for reporting a vulnerability
+privately.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

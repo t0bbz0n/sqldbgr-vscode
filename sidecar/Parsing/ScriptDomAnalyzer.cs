@@ -5,29 +5,30 @@ namespace SqlDebugger.Sidecar.Parsing;
 
 public class InstrumentedScript
 {
-    /// <summary>Instrumenterade batchar (GO-separerade i källan), i körordning.
-    /// Körs var för sig - CREATE FUNCTION/PROC m.fl. kräver egen batch.</summary>
+    /// <summary>The instrumented batches, GO-separated in the source, in the
+    /// order they run. Each runs on its own, because CREATE FUNCTION, CREATE PROC
+    /// and others have to be alone in a batch.</summary>
     public required IReadOnlyList<InstrumentedBatch> Batches { get; init; }
-    /// <summary>Originalfilen som instrumenterades; följer med i paused-events.</summary>
+    /// <summary>The original file that was instrumented; it travels with paused events.</summary>
     public required string SourcePath { get; init; }
-    /// <summary>Rad (1-baserad) i originalfilen -> statementId.</summary>
+    /// <summary>Line, 1-based, in the original file -> statementId.</summary>
     public required Dictionary<int, int> LineMap { get; init; }
-    /// <summary>stmtId -> position i originalfilen, för paused-events tillbaka till klienten.</summary>
+    /// <summary>stmtId -> position in the original file, for paused events back to the client.</summary>
     public required Dictionary<int, StatementSpan> StmtToSpan { get; init; }
-    /// <summary>stmtId -> variabler som är i scope (deklarerade före) vid det statementet.</summary>
+    /// <summary>stmtId -> the variables in scope, declared before, at that statement.</summary>
     public required Dictionary<int, IReadOnlyList<DeclaredVariable>> ScopeMap { get; init; }
-    /// <summary>Pauser som visar slutläget: virtuellt "slut på batch" samt RETURN
-    /// i modulläge. Runnern tvingar stopp på dessa i modulläge.</summary>
+    /// <summary>Pauses that show the final state: a virtual "end of batch", and
+    /// RETURN in module mode. The runner forces a stop on these in module mode.</summary>
     public required IReadOnlyList<int> FinalStmtIds { get; init; }
-    /// <summary>Variabler att rapportera vid avslut i modulläge (returvärde, OUTPUT).</summary>
+    /// <summary>Variables to report at the end in module mode: the return value and OUTPUT parameters.</summary>
     public required IReadOnlyList<string> ResultVariables { get; init; }
     public required List<string> Errors { get; init; }
 }
 
-/// <summary>En körbar batch plus radkarta tillbaka till originalfilen (för SQL-fel).</summary>
+/// <summary>A runnable batch, plus the line map back to the original file, for SQL errors.</summary>
 public record InstrumentedBatch(string Sql, IReadOnlyList<LineSegment> LineSegments)
 {
-    /// <summary>Rad i den instrumenterade batchen (1-baserad) -> originalrad, 0 om okänd.</summary>
+    /// <summary>A line in the instrumented batch, 1-based, to the original line; 0 when unknown.</summary>
     public int MapLine(int instrumentedLine)
     {
         LineSegment? hit = null;
@@ -41,26 +42,27 @@ public record InstrumentedBatch(string Sql, IReadOnlyList<LineSegment> LineSegme
     }
 }
 
-/// <summary>Ett textsegment i den instrumenterade batchen: börjar på rad OutStart
-/// och motsvarar originalrad OrigLine (injicerad text pekar på raden den sattes in vid).</summary>
+/// <summary>A text segment in the instrumented batch: it starts at line OutStart
+/// and corresponds to original line OrigLine. Injected text points at the line it
+/// was inserted at.</summary>
 public record LineSegment(int OutStart, int OrigLine, bool Injected);
 
-/// <summary>1-baserade rad/kolumn-positioner för ett statement i originalfilen.</summary>
+/// <summary>1-based line and column positions for a statement in the original file.</summary>
 public record StatementSpan(int Line, int Column, int EndLine, int EndColumn);
 
 public record DeclaredVariable(
     string Name, string TypeName, bool IsTable, bool IsTempTable = false,
-    /// <summary>Typen är en aliastyp (CREATE TYPE ... FROM), sysname eller en
-    /// CLR-typ. CONVERT tar bara systemtyper, så sådana får aldrig hamna som
-    /// målptyp i ett CONVERT/TRY_CONVERT.</summary>
+    /// <summary>The type is an alias type (CREATE TYPE ... FROM), sysname or a
+    /// CLR type. CONVERT accepts only system types, so one of these must never end
+    /// up as the target type of a CONVERT or TRY_CONVERT.</summary>
     bool IsUserDefined = false);
 
-/// <summary>Parse-fel med position, för Problems-panelen i klienten.</summary>
+/// <summary>A parse error with its position, for the client's Problems panel.</summary>
 public record ParseIssue(int Line, int Column, string Message);
 
 public record ModuleParameter(string Name, string TypeName, string? DefaultValue, bool IsOutput);
 
-/// <summary>En CREATE/ALTER FUNCTION/PROCEDURE hittad i ett script.</summary>
+/// <summary>A CREATE or ALTER FUNCTION/PROCEDURE found in a script.</summary>
 public record ModuleInfo(
     string Kind, string Name, IReadOnlyList<ModuleParameter> Parameters,
     bool CanScriptify, string? Reason);
@@ -71,8 +73,8 @@ public class ScriptDomAnalyzer
     private const string SidDeclaration =
         "DECLARE @__dbg_sid UNIQUEIDENTIFIER = CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'));";
 
-    /// <summary>Namnet runnern binder en modulparameter under; preludet deklarerar
-    /// om den med rätt typ: DECLARE @a INT = @__p_a.</summary>
+    /// <summary>The name the runner binds a module parameter under. The prelude
+    /// redeclares it with the right type: DECLARE @a INT = @__p_a.</summary>
     public static string BoundParameterName(string parameterName)
         => "@__p_" + parameterName.TrimStart('@');
 
@@ -82,8 +84,9 @@ public class ScriptDomAnalyzer
         return errors.Select(e => new ParseIssue(e.Line, e.Column, e.Message)).ToList();
     }
 
-    /// <summary>Hittar första funktions-/procedurdefinitionen i scriptet, för
-    /// extensionens "debugga kroppen?"-fråga och parameterinsamling.</summary>
+    /// <summary>Finds the first function or procedure definition in the script,
+    /// for the extension's "debug the body?" question and for collecting
+    /// parameters.</summary>
     public ModuleInfo? InspectModule(string sql)
     {
         if (ParseScript(sql, out var script, out _) is not null || script is null)
@@ -110,11 +113,12 @@ public class ScriptDomAnalyzer
         return null;
     }
 
-    /// <summary>Instrumenterar kroppen på scriptets första funktion/procedur som
-    /// ett fristående script: parametrarna binds som query-parametrar av runnern,
-    /// och RETURN skrivs om till SET @__dbg_return + paus så returvärdet syns i
-    /// Locals. Övriga batchar (GRANT m.m.) körs inte i detta läge.</summary>
-    /// <param name="debugSchema">T.ex. "[MyDb].__dbg" - kvalificerat så USE i scriptet inte bryter pauserna.</param>
+    /// <summary>Instruments the body of the script's first function or procedure
+    /// as a standalone script. The runner binds the parameters as query
+    /// parameters, and RETURN is rewritten to SET @__dbg_return plus a pause so
+    /// the return value shows up in Locals. Other batches, GRANT and so on, do not
+    /// run in this mode.</summary>
+    /// <param name="debugSchema">For example "[MyDb].__dbg" - qualified, so a USE in the script cannot break the pauses.</param>
     public InstrumentedScript InstrumentModuleBody(string sql, string sourcePath, string debugSchema = "__dbg")
     {
         if (ParseScript(sql, out var script, out _) is { } parseFailure)
@@ -135,11 +139,12 @@ public class ScriptDomAnalyzer
         var prelude = new StringBuilder();
         prelude.AppendLine(Header);
         prelude.AppendLine(SidDeclaration);
-        prelude.AppendLine("SET DATEFORMAT ymd;"); // ISO-datum i parametrar är entydiga oavsett språk
+        prelude.AppendLine("SET DATEFORMAT ymd;"); // ISO dates in parameters are unambiguous in any language
 
-        // Parametrarna binds av runnern som @__p_<namn> (NVARCHAR) och deklareras
-        // här om med signaturens typ - SQL Server gör konverteringen, så INT
-        // förblir INT (ingen strängkonkatenering) och fel syns som SQL-fel.
+        // The runner binds the parameters as @__p_<name> (NVARCHAR); they are
+        // redeclared here with the signature's type. SQL Server does the
+        // conversion, so an INT stays an INT rather than becoming string
+        // concatenation, and a bad value surfaces as a SQL error.
         IList<ProcedureParameter> parameters = module switch
         {
             FunctionStatementBody fn => fn.Parameters,
@@ -155,8 +160,9 @@ public class ScriptDomAnalyzer
                 IsUserDefined: IsUserDefinedType(p.DataType)));
         }
 
-        // Returvärde: skalär funktion/proc -> @__dbg_return; multi-statement TVF ->
-        // dess RETURNS @t TABLE (...) deklareras och rapporteras som resultat.
+        // The return value: a scalar function or procedure goes to @__dbg_return.
+        // For a multi-statement table function, its RETURNS @t TABLE (...) is
+        // declared and reported as the result.
         string? returnVariable = "@__dbg_return";
         var resultVariables = new List<string>();
         switch (module)
@@ -208,10 +214,11 @@ public class ScriptDomAnalyzer
         };
     }
 
-    /// <summary>Instrumenterar en modul PÅ PLATS: hela CREATE/ALTER-texten behålls
-    /// och pauser sprutas bara in i kroppen, så resultatet kan deployas med ALTER
-    /// (som bevarar rättigheter, till skillnad från drop/create). Används av
-    /// attach-läget, där modulen körs av någon annans session.</summary>
+    /// <summary>Instruments a module IN PLACE: the whole CREATE or ALTER text is
+    /// kept and pauses are spliced into the body only, so the result can be
+    /// deployed with ALTER, which preserves permissions where drop and create
+    /// would not. Used by attach mode, where the module is run by somebody else's
+    /// session.</summary>
     public InstrumentedScript InstrumentModuleInPlace(string sql, string sourcePath, string debugSchema = "__dbg")
     {
         if (ParseScript(sql, out var script, out _) is { } parseFailure)
@@ -231,15 +238,15 @@ public class ScriptDomAnalyzer
         var ctx = new Context(sql, debugSchema)
         {
             IsModule = true,
-            // Inget prelude kan deklarera en variabel här, och SESSION_CONTEXT
-            // sätts mitt i körningen när sessionen fångas - läs den varje gång.
+            // No prelude can declare a variable here, and SESSION_CONTEXT is set
+            // mid-run when the session is caught, so read it every time.
             Sid = "CONVERT(UNIQUEIDENTIFIER, SESSION_CONTEXT(N'__dbg_session'))",
-            // Främmande sessioner kör samma kod med NULL som sessions-id, så
-            // ingenting får skrivas förrän grinden sagt att vi ska pausa.
+            // Foreign sessions run this same code with a NULL session id, so
+            // nothing may be written until the gate says to pause.
             CaptureBeforeGate = false
         };
 
-        // Modulens egna parametrar är i scope från början och deklareras inte om.
+        // The module's own parameters are in scope from the start and are not redeclared.
         if (module is ProcedureStatementBody proc)
             foreach (var p in proc.Parameters)
                 ctx.Declared.Add(new DeclaredVariable(
@@ -250,7 +257,7 @@ public class ScriptDomAnalyzer
         foreach (var stmt in statementList.Statements)
             InstrumentStatement(stmt, injections, ctx);
 
-        // CREATE [OR ALTER] -> ALTER, så deployen behåller modulens rättigheter.
+        // CREATE [OR ALTER] becomes ALTER, so the deploy keeps the module's permissions.
         var tokens = module.ScriptTokenStream;
         var keyword = module.FirstTokenIndex;
         while (keyword <= module.LastTokenIndex
@@ -287,12 +294,12 @@ public class ScriptDomAnalyzer
 
         foreach (var batch in script!.Batches)
         {
-            // Variabler lever inte över batchgränser - scopet börjar om per batch.
+            // Variables do not survive a batch boundary: the scope restarts per batch.
             ctx.Declared.Clear();
 
-            // Injektioner sprängs in i batchens originaltext (istället för att
-            // statements skrivs ut platt) så att BEGIN/END-, IF/ELSE- och
-            // WHILE-strukturer bevaras och pauser hamnar inuti blocken.
+            // Injections are spliced into the batch's original text, rather than
+            // printing statements out flat, so that BEGIN/END, IF/ELSE and
+            // WHILE structures are preserved and pauses land inside the blocks.
             var injections = new List<Injection>();
             foreach (var stmt in batch.Statements)
                 InstrumentStatement(stmt, injections, ctx);
@@ -301,9 +308,10 @@ public class ScriptDomAnalyzer
 
             if (string.IsNullOrWhiteSpace(GetText(sql, batch))) continue;
 
-            // SESSION_CONTEXT (satt av runnern) bär sessionId genom alla batchar; den
-            // läses in i en variabel per batch. Inte i batchar utan instrumentering
-            // (CREATE PROC måste vara första statementet i sin batch).
+            // SESSION_CONTEXT, set by the runner, carries the session id through
+            // every batch, and is read into one variable per batch. Not in batches
+            // without instrumentation, because CREATE PROC has to be the first
+            // statement in its batch.
             var prefix = injections.Count > 0 ? $"{Header}\n{SidDeclaration}\n" : $"{Header}\n";
             batches.Add(Splice(ctx, batch.StartOffset, EndOffset(batch), injections, prefix));
         }
@@ -321,7 +329,7 @@ public class ScriptDomAnalyzer
         };
     }
 
-    /// <returns>Fellista vid parse-fel, annars null (och script satt).</returns>
+    /// <returns>The list of errors on a parse failure, otherwise null, with script set.</returns>
     private static List<string>? ParseScript(string sql, out TSqlScript? script, out IList<ParseError> parseErrors)
     {
         var parser = new TSql160Parser(initialQuotedIdentifiers: true);
@@ -393,21 +401,22 @@ public class ScriptDomAnalyzer
             return;
         }
 
-        // En gren utan BEGIN/END (IF @x = 1 SELECT 1 ELSE ...) får ett syntetiskt
-        // block runt sig, annars hamnar capture/pause utanför grenen och körs
-        // ovillkorligt - och ELSE skulle inte längre parsa.
+        // A branch without BEGIN/END, as in IF @x = 1 SELECT 1 ELSE ..., gets a
+        // synthetic block around it. Otherwise the capture and pause land outside
+        // the branch and run unconditionally, and the ELSE would no longer parse.
         injections.Add(new Injection(branch.StartOffset, 0, ctx.NextSeq(), "BEGIN\n"));
         InstrumentStatement(branch, injections, ctx);
         injections.Add(new Injection(EndOffset(branch), 0, ctx.NextSeq(), "\nEND\n"));
     }
 
-    /// <summary>Paus FÖRE statementet: det highlightade statementet är det som
-    /// körs härnäst och Locals visar läget innan det körs (som andra debuggers).
-    /// Deklarationer registreras efter, så variabeln syns från nästa paus.</summary>
+    /// <summary>Pause BEFORE the statement: the highlighted statement is the one
+    /// about to run, and Locals shows the state before it runs, which is what other
+    /// debuggers do. Declarations are registered afterwards, so a variable appears
+    /// from the next pause onwards.</summary>
     private void InstrumentLeaf(TSqlStatement stmt, List<Injection> injections, Context ctx)
     {
-        // Modul-definitioner (CREATE PROC/VIEW/TRIGGER...) måste vara ensamma i sin
-        // batch - text runt dem hamnar annars i modulkroppen. Instrumenteras inte.
+        // Module definitions - CREATE PROC, VIEW, TRIGGER and so on - have to be alone in their
+        // batch, or text around them ends up in the module body. Not instrumented.
         if (stmt is ProcedureStatementBodyBase or ViewStatementBody or TriggerStatementBody)
             return;
 
@@ -416,10 +425,11 @@ public class ScriptDomAnalyzer
         TrackDeclarations(stmt, ctx);
     }
 
-    /// <summary>RETURN pausas före som andra statements. I modulläge ersätts hela
-    /// satsen: RETURN expr -> SET @__dbg_return = expr + paus + RETURN, så
-    /// returvärdet syns i Locals och batchen förblir giltig (RETURN med värde
-    /// är bara tillåtet inuti moduler). Pausen räknas som slutläge.</summary>
+    /// <summary>RETURN pauses before, like any other statement. In module mode the
+    /// whole statement is replaced: RETURN expr becomes SET @__dbg_return = expr,
+    /// a pause, then RETURN, so the return value shows in Locals and the batch stays
+    /// valid - RETURN with a value is only allowed inside a module. That pause
+    /// counts as a final state.</summary>
     private void InstrumentReturn(ReturnStatement ret, List<Injection> injections, Context ctx)
     {
         var id = ctx.RegisterStatement(ret.StartLine, ComputeSpan(ret));
@@ -434,9 +444,9 @@ public class ScriptDomAnalyzer
         injections.Add(new Injection(ret.StartOffset, ret.FragmentLength, ctx.NextSeq(), text.ToString()));
     }
 
-    /// <summary>Virtuellt stopp efter sista statementet så slutläget går att
-    /// inspektera (annars försvinner Locals med sessionen). Träffas bara vid
-    /// stegning - eller alltid i modulläge, där runnern tvingar stoppet.</summary>
+    /// <summary>A virtual stop after the last statement, so the final state can be
+    /// inspected; otherwise Locals disappears with the session. It is only reached
+    /// when stepping, or always in module mode, where the runner forces it.</summary>
     private void AddEndOfBatchPause(TSqlFragment scope, List<Injection> injections, Context ctx)
     {
         var lastToken = scope.ScriptTokenStream[scope.LastTokenIndex];
@@ -451,8 +461,9 @@ public class ScriptDomAnalyzer
     {
         var text = new StringBuilder();
         text.AppendLine();
-        // Den dyra delen (tabellvariabler som JSON + proc-anropet) bara när det
-        // faktiskt blir en paus - annars kostar varje statement i en loop.
+        // The expensive part - table variables as JSON, plus the procedure call -
+        // only when there will actually be a pause. Otherwise every statement in a
+        // loop pays for it.
         if (ctx.CaptureBeforeGate)
         {
             text.Append(BuildScalarCapture(ctx));
@@ -465,10 +476,10 @@ public class ScriptDomAnalyzer
             return text.ToString();
         }
 
-        // Instrumentering på plats: sessionen kan vara någon annans och ännu inte
-        // vara märkt. BeginPause gör anspråket och sätter sessions-id; först
-        // därefter finns det något att skriva locals under. Förlorar den kapplöpningen
-        // (eller är det bara vanlig trafik) förblir id:t NULL och vi rör ingenting.
+        // Instrumented in place: the session may be somebody else's and not yet
+        // marked. BeginPause makes the claim and sets the session id; only then is
+        // there anything to write locals under. If it loses that race, or this is
+        // just ordinary traffic, the id stays NULL and we touch nothing.
         text.AppendLine($"IF {ctx.Dbg}.ShouldPause({ctx.Sid}, {stmtId}) = 1");
         text.AppendLine("BEGIN");
         text.AppendLine($"    EXEC {ctx.Dbg}.BeginPause;");
@@ -493,7 +504,7 @@ public class ScriptDomAnalyzer
         var endLine = lastToken.Line;
         var endColumn = lastToken.Column + text.Length;
 
-        // Sista tokenet kan spänna över flera rader (t.ex. blockkommentar).
+        // The last token can span several lines, a block comment for instance.
         var lastNewline = text.LastIndexOf('\n');
         if (lastNewline >= 0)
         {
@@ -504,13 +515,13 @@ public class ScriptDomAnalyzer
         return new StatementSpan(stmt.StartLine, stmt.StartColumn, endLine, endColumn);
     }
 
-    /// <summary>Spränger in injektionerna i originaltexten [start, end) och bygger
-    /// samtidigt radkartan tillbaka till originalfilen.</summary>
+    /// <summary>Splices the injections into the original text [start, end) and
+    /// builds the line map back to the original file as it goes.</summary>
     private static InstrumentedBatch Splice(
         Context ctx, int start, int end, List<Injection> injections, string prefix)
     {
         var sb = new StringBuilder(prefix);
-        // Prefixet (header, DECLARE @__dbg_return) mappas till batchens första originalrad.
+        // The prefix - header, DECLARE @__dbg_return - maps to the batch's first original line.
         var segments = new List<LineSegment> { new(1, ctx.LineAt(start), Injected: true) };
         var outLine = 1 + prefix.Count(c => c == '\n');
         var pos = start;
@@ -529,7 +540,7 @@ public class ScriptDomAnalyzer
             segments.Add(new LineSegment(outLine, ctx.LineAt(inj.Offset), Injected: true));
             sb.Append(inj.Text);
             outLine += CountNewlines(inj.Text, 0, inj.Text.Length);
-            pos = Math.Max(pos, inj.Offset + inj.Length); // Length > 0 = ersättning
+            pos = Math.Max(pos, inj.Offset + inj.Length); // Length > 0 means a replacement
         }
         AppendOriginal(pos, end);
 
@@ -559,8 +570,8 @@ public class ScriptDomAnalyzer
             ctx.Declared.Add(new DeclaredVariable(
                 tableDecl.Body.VariableName.Value, "TABLE", IsTable: true));
         }
-        // Temp-tabeller fångas som tabellvariabler (guardade med OBJECT_ID vid
-        // capture, eftersom de till skillnad från variabler kanske inte finns).
+        // Temp tables are captured as table variables, guarded with OBJECT_ID at
+        // capture time because, unlike variables, they may not exist.
         else if (stmt is CreateTableStatement { SchemaObjectName.BaseIdentifier.Value: var tmp } && tmp.StartsWith('#'))
         {
             AddTempTable(ctx, tmp);
@@ -579,7 +590,7 @@ public class ScriptDomAnalyzer
 
     private const int TableCaptureRows = 100;
 
-    /// <summary>Skalära variabler: en DELETE + en INSERT ... VALUES per statement.</summary>
+    /// <summary>Scalar variables: one DELETE and one INSERT ... VALUES per statement.</summary>
     private static string BuildScalarCapture(Context ctx)
     {
         if (ctx.Declared.Count == 0) return string.Empty;
@@ -595,13 +606,13 @@ public class ScriptDomAnalyzer
         return sb.ToString();
     }
 
-    /// <summary>Tabellvariabler och temp-tabeller: de första raderna som JSON,
-    /// antal rader i typnamnet (TABLE(n)). Temp-tabeller via dynamisk SQL bakom en
-    /// OBJECT_ID-guard - en referens till en temp-tabell som inte finns skulle
-    /// annars fälla hela statementet vid kompilering.</summary>
+    /// <summary>Table variables and temp tables: the first rows as JSON, with the
+    /// row count in the type name, TABLE(n). Temp tables go through dynamic SQL
+    /// behind an OBJECT_ID guard, because a reference to a temp table that does not
+    /// exist would otherwise fail the whole statement at compile time.</summary>
     private static string BuildTableCapture(Context ctx)
     {
-        // Inuti sp_executesql är sid alltid parametern; värdet kommer utifrån.
+        // Inside sp_executesql the sid is always the parameter; the value comes from outside.
         const string sidInDynamicSql = "@__dbg_sid";
         var sb = new StringBuilder();
         foreach (var (v, i) in ctx.Declared.Select((v, i) => (v, i)).Where(x => x.v.IsTable))
@@ -625,8 +636,9 @@ public class ScriptDomAnalyzer
         return sb.ToString();
     }
 
-    /// <summary>Efter en paus: läs in värden som klienten satt (setVariable) och töm.
-    /// SELECT @x = ... utan träff lämnar @x orörd; en rad med NULL sätter NULL.</summary>
+    /// <summary>After a pause: read the values the client set with setVariable, and
+    /// empty the table. SELECT @x = ... with no matching row leaves @x untouched; a
+    /// row holding NULL sets NULL.</summary>
     private static string BuildOverridesApply(Context ctx)
     {
         var scalars = ctx.Declared.Where(v => !v.IsTable).ToList();
@@ -637,10 +649,11 @@ public class ScriptDomAnalyzer
         foreach (var v in scalars)
         {
             var t = v.TypeName.ToLowerInvariant();
-            // CONVERT tar bara systemtyper: TRY_CONVERT(min_aliastyp, ...) är ett
-            // kompileringsfel som fäller hela batchen. Tilldelning konverterar
-            // ändå implicit till variabelns egen typ, så aliastyper får den vägen
-            // - och ett värde som inte ryms blir ett tydligt fel i stället för NULL.
+            // CONVERT accepts only system types: TRY_CONVERT(my_alias_type, ...)
+            // is a compile error that fails the whole batch. Assignment converts
+            // implicitly to the variable's own type anyway, so alias types go that
+            // way - and a value that does not fit becomes a clear error rather
+            // than a NULL.
             var convert = v.IsUserDefined
                 ? "Value"
                 : t.StartsWith("binary") || t.StartsWith("varbinary")
@@ -653,13 +666,14 @@ public class ScriptDomAnalyzer
         return sb.ToString();
     }
 
-    /// <summary>Textrepresentation per typ: datum som ISO 8601 (stil 126, annars
-    /// språkberoende "Jan 31 2024"), binärt som hex (stil 1), övrigt TRY_CONVERT.</summary>
+    /// <summary>The text representation per type: dates as ISO 8601 (style 126;
+    /// otherwise you get the language-dependent "Jan 31 2024"), binary as hex
+    /// (style 1), everything else through TRY_CONVERT.</summary>
     private static string ValueExpression(DeclaredVariable v)
     {
-        // En aliastyp kan heta vad som helst - "datum" säger inget om bastypen -
-        // så gissa inte på namnet. Målet är NVARCHAR(MAX), en systemtyp, så
-        // TRY_CONVERT är giltigt oavsett vad källan är.
+        // An alias type can be called anything, and the name says nothing about
+        // the base type, so do not guess from it. The target is NVARCHAR(MAX), a
+        // system type, so TRY_CONVERT is valid whatever the source is.
         if (v.IsUserDefined) return $"TRY_CONVERT(NVARCHAR(MAX), {v.Name})";
         var t = v.TypeName.ToLowerInvariant();
         if (t.StartsWith("date") || t.StartsWith("time") || t.StartsWith("smalldatetime"))
@@ -669,9 +683,9 @@ public class ScriptDomAnalyzer
         return $"TRY_CONVERT(NVARCHAR(MAX), {v.Name})";
     }
 
-    /// <summary>Allt som inte är en inbyggd systemtyp: aliastyper (CREATE TYPE
-    /// ... FROM), sysname - som också är en aliastyp - och CLR-typer. ScriptDom
-    /// ger dem alla som UserDataTypeReference.</summary>
+    /// <summary>Anything that is not a built-in system type: alias types (CREATE
+    /// TYPE ... FROM), sysname - which is itself an alias type - and CLR types.
+    /// ScriptDom hands them all back as UserDataTypeReference.</summary>
     private static bool IsUserDefinedType(DataTypeReference? dataType) =>
         dataType is UserDataTypeReference;
 
@@ -702,21 +716,21 @@ public class ScriptDomAnalyzer
         }
 
         public string Sql { get; }
-        /// <summary>Kvalificerat schemanamn för __dbg-objekten, t.ex. "[MyDb].__dbg".</summary>
+        /// <summary>The qualified schema name for the __dbg objects, for example "[MyDb].__dbg".</summary>
         public string Dbg { get; }
         public bool IsModule { get; init; }
-        /// <summary>Uttryck som ger sessionens id i genererad SQL. Normalt variabeln
-        /// som preludet deklarerar; vid instrumentering på plats finns inget prelude,
-        /// och SESSION_CONTEXT måste läsas om vid varje statement eftersom den sätts
-        /// mitt i körningen (när en främmande session fångas).</summary>
+        /// <summary>The expression that yields the session id in generated SQL.
+        /// Normally the variable the prelude declares. When instrumenting in place
+        /// there is no prelude, and SESSION_CONTEXT has to be re-read at every
+        /// statement because it is set mid-run, when a foreign session is caught.</summary>
         public string Sid { get; init; } = "@__dbg_sid";
-        /// <summary>Om skalära locals får fångas före grinden. Sant när sessionen
-        /// alltid är vår (då är värdena tillgängliga även om ett statement kastar).
-        /// Falskt vid instrumentering på plats: där kör främmande trafik samma kod
-        /// med NULL som sessions-id, och en ovillkorlig INSERT skulle spränga
-        /// deras anrop.</summary>
+        /// <summary>Whether scalar locals may be captured before the gate. True
+        /// when the session is always ours, in which case the values are available
+        /// even if a statement throws. False when instrumenting in place: there,
+        /// foreign traffic runs the same code with a NULL session id, and an
+        /// unconditional INSERT would blow up their call.</summary>
         public bool CaptureBeforeGate { get; init; } = true;
-        /// <summary>Modulläge: variabeln som RETURN-uttryck fångas i (null för TVF).</summary>
+        /// <summary>Module mode: the variable a RETURN expression is captured in; null for a table function.</summary>
         public string? ReturnVariable { get; init; }
         public Dictionary<int, int> LineMap { get; } = [];
         public Dictionary<int, StatementSpan> StmtToSpan { get; } = [];
@@ -730,7 +744,7 @@ public class ScriptDomAnalyzer
 
         public int NextSeq() => _seq++;
 
-        /// <summary>Nytt stmtId med span och scope = variabler deklarerade före.</summary>
+        /// <summary>A new stmtId, with its span, and a scope of the variables declared before it.</summary>
         public int RegisterStatement(int? line, StatementSpan span)
         {
             var id = _stmtId++;
@@ -740,7 +754,7 @@ public class ScriptDomAnalyzer
             return id;
         }
 
-        /// <summary>1-baserad originalrad för ett offset.</summary>
+        /// <summary>The 1-based original line for an offset.</summary>
         public int LineAt(int offset)
         {
             var idx = Array.BinarySearch(_lineStarts, offset);

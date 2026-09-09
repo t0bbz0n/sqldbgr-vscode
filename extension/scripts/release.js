@@ -1,19 +1,19 @@
 #!/usr/bin/env node
-// Ett kommando som gör hela releasen: höjer versionen, bygger, publicerar till
-// Marketplace och taggar.
+// One command for the whole release: bump the version, build, publish to the
+// Marketplace and tag.
 //
 //   npm run release              # patch: 0.1.0 -> 0.1.1
 //   npm run release -- minor
 //   npm run release -- 1.0.0
 //   npm run release -- patch --no-push
 //
-// Publiceringen sker som DU, via `az login` - ingen app-registrering, ingen
-// service principal, ingen Azure DevOps-användare. Det är hela poängen: den
-// vägen kräver ingenting av det som är krångligt att sätta upp.
+// Publishing happens as YOU, through `az login`: no app registration, no
+// service principal, no Azure DevOps user. That is the whole point - this route
+// needs none of the parts that are awkward to set up.
 //
-// CI krockar inte med det här. Publiceringsjobbet där hoppar över Marketplace
-// när AZURE_CLIENT_ID saknas, så taggen som pushas nedan bygger VSIX:en och
-// skapar GitHub-releasen medan den här körningen redan gjort publiceringen.
+// CI does not collide with this. Its publish job skips the Marketplace when
+// AZURE_CLIENT_ID is absent, so the tag pushed below builds the VSIX and creates
+// the GitHub release while this run has already done the publishing.
 'use strict';
 
 const { execFileSync, spawnSync } = require('child_process');

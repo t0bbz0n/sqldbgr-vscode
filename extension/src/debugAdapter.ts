@@ -24,8 +24,8 @@ const RETURN_VARIABLE = '@__dbg_return';
 
 type TableRow = Record<string, unknown>;
 
-// Vad ett variablesReference pekar på: Locals-scopet, en TABLE-variabels
-// rader, eller kolumnerna i en enskild rad.
+// What a variablesReference points at: the Locals scope, the rows of a TABLE
+// variable, or the columns of a single row.
 type VariableContainer =
   | { kind: 'locals' }
   | { kind: 'rows'; rows: TableRow[] }
@@ -38,7 +38,7 @@ interface TsqlLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   params?: Record<string, unknown>;
   sidecarUrl?: string;
   sidecarToken?: string;
-  /** Attach: sessionen providern redan fångat; ingen egen körning startas. */
+  /** Attach: the session the provider already caught. Nothing is started here. */
   attachSessionId?: string;
   stopOnEntry?: boolean;
   transaction?: 'none' | 'rollback' | 'commit';
@@ -51,7 +51,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
   private launchArgs!: TsqlLaunchArgs;
   private currentStack: PausedEvent['stack'] = [];
   private variableHandles = new Handles<VariableContainer>();
-  /** Senast satta breakpoints per fil - skickas om vid restart. */
+  /** The breakpoints last set per file; they are resent on restart. */
   private breakpointsBySource = new Map<string, DebugProtocol.SourceBreakpoint[]>();
 
   constructor(private readonly onFatal?: FatalHandler) {
@@ -69,9 +69,10 @@ export class TsqlDebugSession extends LoggingDebugSession {
       supportsRestartRequest: true
     };
     this.sendResponse(response);
-    // InitializedEvent skickas först när sidecaren parsat filen (i launchRequest):
-    // VS Code svarar på den med setBreakpoints, och då måste mappern vara laddad
-    // och sessionen finnas - annars tappas breakpoints satta före F5.
+    // InitializedEvent is not sent until the sidecar has parsed the file, in
+    // launchRequest. VS Code answers it with setBreakpoints, and by then the
+    // mapper must be loaded and the session must exist - otherwise breakpoints
+    // set before F5 are lost.
   }
 
   protected async launchRequest(
@@ -81,7 +82,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     try {
       await this.startSession();
       this.sendResponse(response);
-      // Nu kan breakpoints tas emot; configurationDone startar körningen.
+      // Breakpoints can be received now; configurationDone starts the run.
       this.sendEvent(new InitializedEvent());
     } catch (err) {
       this.sendErrorResponse(response, 1001,
@@ -89,7 +90,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     }
   }
 
-  /** Parsar filen i sidecaren och kopplar upp eventströmmen (utan att köra). */
+  /** Parses the file in the sidecar and opens the event stream, without running. */
   private async startSession(): Promise<void> {
     const args = this.launchArgs;
     this.sidecar = new SidecarClient(args.sidecarUrl ?? 'http://localhost:5199', args.sidecarToken);
@@ -99,7 +100,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
 
     this.sidecar.on('paused', (e: PausedEvent) => {
       this.currentStack = e.stack;
-      this.variableHandles.reset(); // gamla referenser är ogiltiga vid nytt stopp
+      this.variableHandles.reset(); // old references are invalid at a new stop
       this.sendEvent(new StoppedEvent(e.reason, THREAD_ID, e.text ?? undefined));
     });
     this.sidecar.on('output', (o: SidecarOutput) => {
@@ -129,9 +130,9 @@ export class TsqlDebugSession extends LoggingDebugSession {
   }
 
   /**
-   * Attach: attach-providern har redan fångat en körande session som står
-   * pausad i sin sidecar. Vi kopplar bara upp oss - därefter är allt
-   * (breakpoints, locals, stegning) identiskt med en lokal session.
+   * Attach: the provider has already caught a running session, paused in its
+   * own sidecar. All we do is connect. From there breakpoints, locals and
+   * stepping are identical to a local session.
    */
   protected async attachRequest(
     response: DebugProtocol.AttachResponse, args: TsqlLaunchArgs
@@ -145,7 +146,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
       await this.startSession();
       this.sendResponse(response);
       this.sendEvent(new InitializedEvent());
-      // Sessionen står redan pausad; visa den direkt.
+      // The session is already paused; show it straight away.
       this.sendEvent(new StoppedEvent('pause', THREAD_ID));
     } catch (err) {
       this.sendErrorResponse(response, 1005,
@@ -157,7 +158,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     response: DebugProtocol.ConfigurationDoneResponse
   ): Promise<void> {
     try {
-      // Attach: sessionen körs redan (och står pausad) - bara breakpoints skickades.
+      // Attach: the session is already running, and paused. Only breakpoints were sent.
       if (!this.launchArgs.attachSessionId) {
         await this.sidecar.run(this.launchArgs.stopOnEntry === true);
       }
@@ -168,7 +169,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     }
   }
 
-  /** Ctrl+Shift+F5: ny session med samma argument och breakpoints, utan omfrågning. */
+  /** Ctrl+Shift+F5: a new session with the same arguments and breakpoints, no questions. */
   protected async restartRequest(response: DebugProtocol.RestartResponse): Promise<void> {
     if (this.launchArgs.attachSessionId) {
       this.sendErrorResponse(response, 1006,
@@ -198,8 +199,8 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.breakpointsBySource.set(source, requested);
     const { verified, specs } = this.mapBreakpoints(source, requested);
 
-    // Sidecaren håller breakpoints i minnet tills körningen startar, och
-    // uppdaterar Control-raden under pågående session.
+    // The sidecar keeps breakpoints in memory until the run starts, and
+    // updates the control row while a session is under way.
     if (this.sidecar) {
       await this.sidecar.setBreakpoints(specs).catch(err =>
         this.sendEvent(new OutputEvent(`[sidecar] breakpoints: ${(err as Error).message}\n`, 'stderr')));
@@ -305,8 +306,8 @@ export class TsqlDebugSession extends LoggingDebugSession {
       return variable;
     }
 
-    // Sidecaren serialiserar TABLE-variabler som en JSON-array av de första
-    // raderna (FOR JSON AUTO); NULL betyder tom tabell; TABLE(n) bär totalen.
+    // The sidecar serialises TABLE variables as a JSON array of the first rows
+    // (FOR JSON AUTO). NULL means an empty table; TABLE(n) carries the total.
     const rows = this.parseTableRows(v.value);
     const total = tableMatch[1] !== undefined ? Number(tableMatch[1]) : rows?.length ?? 0;
     if (rows === null) {
@@ -347,7 +348,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     return String(cell);
   }
 
-  /** Hover: bara variabelnamn (allt annat ignoreras). Watch/REPL: godtyckligt T-SQL-uttryck. */
+  /** Hover: variable names only, everything else is ignored. Watch and REPL: any T-SQL expression. */
   protected async evaluateRequest(
     response: DebugProtocol.EvaluateResponse,
     args: DebugProtocol.EvaluateArguments
@@ -380,7 +381,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.sendResponse(response);
   }
 
-  /** Nytt värde tar effekt när batchen fortsätter; NULL (skiftlägesokänsligt) sätter NULL. */
+  /** The new value takes effect when the batch continues; NULL, in any case, sets NULL. */
   protected async setVariableRequest(
     response: DebugProtocol.SetVariableResponse,
     args: DebugProtocol.SetVariableArguments
@@ -416,7 +417,7 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.sendResponse(response);
   }
 
-  /** Pause-knappen: batchen stannar vid nästa statement. */
+  /** The Pause button: the batch stops at the next statement. */
   protected async pauseRequest(response: DebugProtocol.PauseResponse): Promise<void> {
     await this.sidecar.signal('stepOver');
     this.sendResponse(response);

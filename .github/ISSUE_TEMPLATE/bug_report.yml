@@ -1,0 +1,73 @@
+name: Bug report
+description: Something behaves differently from how it is documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The three things that usually decide whether a
+        bug can be fixed are the SQL that reproduces it, the SQL Server
+        version, and what the logs said.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what the debugger did instead of what you expected.
+      placeholder: |
+        I set a breakpoint on line 12 of a CREATE PROCEDURE file and pressed F5.
+        The run went straight to the end without stopping.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sql
+    attributes:
+      label: The SQL that reproduces it
+      description: >
+        The smallest script or module that shows the problem. Replace real
+        table and column names with something harmless if you need to - but
+        keep the shape, because the shape is usually what breaks.
+      render: sql
+    validations:
+      required: true
+
+  - type: input
+    id: sql-server
+    attributes:
+      label: SQL Server version
+      description: The output of `SELECT @@VERSION`, or just "SQL Server 2019" / "Azure SQL Database".
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: sqldbgr version
+      description: >
+        From the Extensions panel, or `GET /health` on the sidecar. The CI
+        build number is part of it, for example 0.1.58.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug Console and sidecar log
+      description: >
+        Anything the Debug Console printed, and the last lines from the
+        "sqldbgr Sidecar" output channel. Remove connection strings and
+        passwords before pasting.
+      render: text
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode
+      options:
+        - Script (F5 on a .sql file)
+        - Module mode (F5 on a CREATE PROCEDURE/FUNCTION)
+        - Attach (the licensed extension)
+        - Not sure
+    validations:
+      required: true

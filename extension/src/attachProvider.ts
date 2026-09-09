@@ -2,54 +2,55 @@ import * as vscode from 'vscode';
 
 const t = vscode.l10n.t;
 
-/** Protokollversion som den här extensionen talar. Providern måste matcha major. */
+/** The protocol version this extension speaks. The provider must match on major. */
 export const ATTACH_PROTOCOL_VERSION = 1;
 const DEFAULT_PROVIDER_ID = 'tobias-trunehag.sqldbgr-pro';
 
-/** Vad klienten ber om när en körande session ska fångas. */
+/** What the client asks for when a running session is to be caught. */
 export interface AttachRequest {
-  /** Anslutningen användaren valt (samma som för lokal debugging). */
+  /** The connection the user chose, the same one local debugging uses. */
   connectionString: string;
-  /** Filen i editorn, om någon - providern får välja modul själv annars. */
+  /** The file in the editor, if any. Otherwise the provider picks the module. */
   program?: string;
-  /** Databas där __dbg-schemat ska ligga, om användaren styrt det. */
+  /** The database the __dbg schema should live in, if the user chose one. */
   debugDatabase?: string;
 }
 
 /**
- * En session som providern redan har fångat och som står pausad i en sidecar.
- * Klientens debug-adapter kopplar upp sig mot den och kör vidare med samma
- * breakpoints, locals och stegning som för lokala sessioner.
+ * A session the provider has already caught, paused inside a sidecar. The
+ * client's debug adapter connects to it and carries on with the same
+ * breakpoints, locals and stepping a local session has.
  */
 export interface AttachSession {
-  /** Sidecar som äger sessionen; talar sidecar-HTTP-protokollet (se docs/ATTACH-PROTOCOL.md). */
+  /** The sidecar owning the session; it speaks the sidecar HTTP protocol (docs/ATTACH-PROTOCOL.md). */
   sidecarUrl: string;
   sidecarToken?: string;
-  /** Sessionen som redan är skapad och pausad. */
+  /** The session, already created and paused. */
   sessionId: string;
-  /** Fil eller virtuellt dokument som breakpoints mappas mot. */
+  /** The file, or virtual document, breakpoints are mapped against. */
   program: string;
 }
 
 /**
- * API:t som attach-extensionen exporterar. Den äger licenskontroll, val av
- * modul, filter, deploy av instrumenterad definition och återställning - allt
- * som skiljer attach från lokal debugging. Den här extensionen kan inte
- * pausa i deployade moduler på egen hand och gör inga försök att göra det.
+ * The API the attach extension exports. It owns the licence check, choosing
+ * the module, filters, deploying the instrumented definition and restoring it
+ * afterwards - everything that separates attach from local debugging. This
+ * extension cannot pause inside a deployed module on its own, and does not
+ * try to.
  */
 export interface AttachProviderApi {
   readonly protocolVersion: number;
   /**
-   * Armerar en bevakning och resolvar när en session fångats, eller undefined
-   * om användaren avbröt eller inget fångades innan bevakningen slog av.
+   * Arms a watch and resolves once a session is caught, or with undefined if
+   * the user cancelled or nothing was caught before the watch expired.
    */
   attach(request: AttachRequest, token: vscode.CancellationToken): Promise<AttachSession | undefined>;
 }
 
 /**
- * Hittar och aktiverar attach-providern. Saknas den (vanligaste fallet - den
- * är en separat, licensierad extension) förklaras det en gång; lokal debugging
- * påverkas aldrig av att den inte finns.
+ * Finds and activates the attach provider. When it is missing, which is the
+ * common case because it is a separate licensed extension, that is explained
+ * once. Local debugging is never affected by its absence.
  */
 export async function resolveAttachProvider(): Promise<AttachProviderApi | undefined> {
   const id = vscode.workspace.getConfiguration('sqldbgr').get<string>('attachExtension') || DEFAULT_PROVIDER_ID;
@@ -82,7 +83,7 @@ export async function resolveAttachProvider(): Promise<AttachProviderApi | undef
   return api;
 }
 
-/** Kör providerns attach-flöde med en avbrytbar progress-notis. */
+/** Runs the provider's attach flow behind a cancellable progress notification. */
 export async function catchSession(
   api: AttachProviderApi,
   request: AttachRequest

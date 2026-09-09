@@ -1,9 +1,9 @@
 import { ResultSetEvent } from './sidecarClient';
 
 /**
- * Resultatmängder från den senaste debug-sessionen, i full bredd (cappade i
- * sidecaren). Debug Console visar bara en klippt texttabell; kommandot
- * "sqldbgr: Open last result set" öppnar dessa som dokument.
+ * Result sets from the last debug session, at full width - the sidecar caps
+ * them. The Debug Console only shows a clipped text table; the command
+ * "sqldbgr: Open last result set" opens these as a document.
  */
 const MAX_KEPT = 20;
 const results: ResultSetEvent[] = [];
@@ -21,7 +21,7 @@ export function getResults(): readonly ResultSetEvent[] {
   return results;
 }
 
-/** Markdown-tabeller: läsbara som text och renderas i markdown-förhandsvisningen. */
+/** Markdown tables: readable as text, and rendered in the markdown preview. */
 export function renderMarkdown(sets: readonly ResultSetEvent[]): string {
   const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
   return sets.map((r, i) => {

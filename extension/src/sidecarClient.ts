@@ -27,7 +27,7 @@ export interface ModuleInfo {
 
 export interface ParseIssue { line: number; column: number; message: string; }
 
-/** Statement-spans från sidecaren: breakpoints inuti ett flerradigt statement träffar det. */
+/** Statement spans from the sidecar: a breakpoint inside a multi-line statement hits it. */
 export interface StatementSpan { stmtId: number; line: number; endLine: number; }
 
 export interface InspectResult {
@@ -66,7 +66,7 @@ export interface StackFrameInfo {
 
 export interface PausedEvent {
   reason: 'breakpoint' | 'step' | 'entry' | 'exception';
-  /** Felmeddelande vid reason === 'exception'. */
+  /** The error message when reason === 'exception'. */
   text: string | null;
   stack: StackFrameInfo[];
 }
@@ -89,7 +89,7 @@ export interface HealthInfo {
 }
 
 /**
- * Pratar med sidecaren över HTTP + Server-Sent Events.
+ * Talks to the sidecar over HTTP and Server-Sent Events.
  * Events: 'paused' (PausedEvent), 'output' (OutputEvent), 'resultset' (ResultSetEvent),
  * 'terminated', 'error' (string)
  */
@@ -99,14 +99,14 @@ export class SidecarClient extends EventEmitter {
 
   constructor(private baseUrl: string, private token?: string) { super(); }
 
-  /** Sessionslös: modulinfo, parse-fel och statement-spans för filen. */
+  /** Session-free: module info, parse errors and statement spans for the file. */
   async inspect(programPath: string): Promise<InspectResult> {
     return this.post('/inspect', { programPath });
   }
 
   /**
-   * Kopplar upp mot en session som redan finns i sidecaren (attach-läget:
-   * providern har fångat en körande session åt oss). Ingen ny körning startas.
+   * Connects to a session the sidecar already has. This is attach mode: the
+   * provider has caught a running session for us. Nothing new is started.
    */
   async resumeSession(sessionId: string): Promise<ParseResult> {
     const result = await this.get<ParseResult>(`/session/${sessionId}`);
@@ -115,7 +115,7 @@ export class SidecarClient extends EventEmitter {
     return result;
   }
 
-  /** Parsar och instrumenterar; körningen startar först vid run(). */
+  /** Parses and instruments. Nothing runs until run() is called. */
   async startSession(req: StartSessionRequest): Promise<ParseResult> {
     const result = await this.post<ParseResult>('/session/start', req);
     this.sessionId = result.sessionId;
@@ -123,7 +123,7 @@ export class SidecarClient extends EventEmitter {
     return result;
   }
 
-  /** Startar körningen - anropas när alla breakpoints är satta (configurationDone). */
+  /** Starts the run, once every breakpoint is set (configurationDone). */
   async run(stopOnEntry: boolean): Promise<void> {
     if (!this.sessionId) return;
     await this.post(`/session/${this.sessionId}/run`, { stopOnEntry });
@@ -133,7 +133,7 @@ export class SidecarClient extends EventEmitter {
     return this.get<HealthInfo>('/health');
   }
 
-  /** Ber sidecaren avsluta sig själv (används för att byta ut en äldre version). */
+  /** Asks the sidecar to shut itself down, so an older one can be replaced. */
   async shutdown(): Promise<void> {
     await this.post('/shutdown', {});
   }

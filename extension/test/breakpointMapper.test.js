@@ -1,7 +1,7 @@
-// Rena enhetstester, körda med node:test mot den kompilerade koden. Ingen
-// vscode-import finns i breakpointMapper, så den går att köra utan en
-// extension host - och den avgör var VARJE breakpoint hamnar, så den är värd
-// att täcka innan något tyngre testramverk.
+// Plain unit tests, run with node:test against the compiled code.
+// breakpointMapper imports nothing from vscode, so it can run without an
+// extension host - and it decides where EVERY breakpoint lands, so it is worth
+// covering before reaching for a heavier test framework.
 const test = require('node:test');
 const assert = require('node:assert');
 const { BreakpointMapper } = require('../out/breakpointMapper');
@@ -29,51 +29,50 @@ function mapper(path = '/tmp/x.sql') {
   return m;
 }
 
-test('en rad som är ett statement träffar det', () => {
+test('a line that is a statement hits it', () => {
   assert.deepStrictEqual(mapper().snapToStatement('/tmp/x.sql', 1), { line: 1, stmtId: 0 });
 });
 
-test('en rad inuti ett flerradigt statement träffar statementet', () => {
-  // Rad 4 är BEGIN - inuti IF-satsen, inget eget statement.
+test('a line inside a multi-line statement hits that statement', () => {
+  // Line 4 is BEGIN: inside the IF, not a statement of its own.
   assert.deepStrictEqual(mapper().snapToStatement('/tmp/x.sql', 4), { line: 3, stmtId: 1 });
 });
 
-test('vid nästling vinner det innersta statementet', () => {
-  // Rad 5 ligger både i IF (3-6) och i SET (5-5). Att stanna på IF vore fel:
-  // användaren satte breakpointen på tilldelningen.
+test('where they nest, the innermost statement wins', () => {
+  // Line 5 is in both the IF (3-6) and the SET (5-5). Stopping on the IF would
+  // be wrong: the user put the breakpoint on the assignment.
   assert.deepStrictEqual(mapper().snapToStatement('/tmp/x.sql', 5), { line: 5, stmtId: 2 });
 });
 
-test('en tom rad snappas nedåt till nästa statement', () => {
-  // Rad 2 och 7 är tomma - VS/SSDT flyttar breakpointen nedåt, inte uppåt.
+test('a blank line snaps down to the next statement', () => {
+  // Lines 2 and 7 are blank. Visual Studio and SSDT move the breakpoint down, not up.
   assert.deepStrictEqual(mapper().snapToStatement('/tmp/x.sql', 2), { line: 3, stmtId: 1 });
   assert.deepStrictEqual(mapper().snapToStatement('/tmp/x.sql', 7), { line: 8, stmtId: 3 });
 });
 
-test('en rad efter sista statementet är ingen giltig breakpoint', () => {
+test('a line past the last statement is not a valid breakpoint', () => {
   assert.strictEqual(mapper().snapToStatement('/tmp/x.sql', 99), null);
 });
 
-test('en okänd fil ger null i stället för att kasta', () => {
+test('an unknown file returns null rather than throwing', () => {
   assert.strictEqual(mapper().snapToStatement('/tmp/annan.sql', 1), null);
 });
 
-test('sökvägar jämförs skiftlägesokänsligt och med / oavsett separator', () => {
-  // VS Code och sidecaren är inte överens om vare sig separator eller
-  // skiftläge på Windows; hade de jämförts rakt av hade inga breakpoints
-  // fungerat där.
+test('paths compare case-insensitively, and with / whatever the separator', () => {
+  // VS Code and the sidecar agree on neither the separator nor the case on
+  // Windows. Compared as they come, no breakpoint would work there.
   const m = mapper('C:\\Work\\Proc.sql');
   assert.deepStrictEqual(m.snapToStatement('c:/work/proc.sql', 1), { line: 1, stmtId: 0 });
 });
 
-test('spans behöver inte komma sorterade', () => {
+test('spans need not arrive sorted', () => {
   const m = new BreakpointMapper();
   m.load('/tmp/y.sql', [...spans].reverse());
   assert.deepStrictEqual(m.snapToStatement('/tmp/y.sql', 5), { line: 5, stmtId: 2 });
   assert.deepStrictEqual(m.snapToStatement('/tmp/y.sql', 2), { line: 3, stmtId: 1 });
 });
 
-test('en fil utan statements ger null', () => {
+test('a file with no statements returns null', () => {
   const m = new BreakpointMapper();
   m.load('/tmp/tom.sql', []);
   assert.strictEqual(m.snapToStatement('/tmp/tom.sql', 1), null);

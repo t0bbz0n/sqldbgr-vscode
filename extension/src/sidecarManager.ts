@@ -9,31 +9,31 @@ import { SidecarClient } from './sidecarClient';
 const NPX_FALLBACK_COMMAND = ['npx', '-y', 'sqldbgr-sidecar'];
 const HEALTH_PROBE_TIMEOUT_MS = 1000;
 const HEALTH_POLL_INTERVAL_MS = 250;
-// Generöst: första körningen kan behöva ladda ner .NET-runtimen/npx-paketet.
+// Generous: the first run may have to download the .NET runtime or the npx package.
 const STARTUP_TIMEOUT_MS = 120_000;
 const t = vscode.l10n.t;
 
 export interface SidecarEndpoint { url: string; token?: string; }
 
 /**
- * Ser till att en sidecar kör innan en debug-session startar och returnerar
- * dess URL. Default: varje VS Code-fönster startar sin EGEN sidecar på en
- * slumpport (--port 0; adressen läses från stdout) - då kan fönster aldrig
- * ta över eller döda varandras sidecar. Anges `sidecarUrl` explicit används
- * den (egenstartad sidecar), och startas på den porten om inget svarar.
- * Processen ägs av extensionen och städas undan vid deactivate.
+ * Makes sure a sidecar is running before a debug session starts, and returns
+ * its URL. By default every VS Code window starts its OWN sidecar on a random
+ * port (--port 0; the address is read from stdout), so windows can never take
+ * over or kill each other's. An explicit `sidecarUrl` is used as given - a
+ * sidecar you started yourself - and is started on that port if nothing
+ * answers. The process is owned by the extension and cleaned up on deactivate.
  *
- * Startkommandot väljs i ordning:
- *  1. sidecarCommand från launch-konfigurationen (dev-override)
- *  2. den buntade sidecaren i VSIX:en (sidecar-dist/), körd med en runtime
- *     som .NET Install Tool-extensionen hämtar automatiskt vid första
- *     körningen (fallback: systemets `dotnet`)
- *  3. npx sqldbgr-sidecar (obundlad/dev-miljö)
+ * The start command is chosen in this order:
+ *  1. sidecarCommand from the launch configuration, a development override.
+ *  2. The sidecar bundled in the VSIX (sidecar-dist/), run against a runtime
+ *     the .NET Install Tool extension fetches on first use, falling back to
+ *     the system `dotnet`.
+ *  3. npx sqldbgr-sidecar, for an unbundled or development environment.
  */
 export class SidecarManager implements vscode.Disposable {
   private proc: ChildProcess | null = null;
   private output: vscode.OutputChannel | null = null;
-  /** URL:en för sidecaren vi själva startat (slumpport eller explicit). */
+  /** The URL of the sidecar we started ourselves, random port or explicit. */
   private ownUrl: string | null = null;
   private ownToken: string | undefined;
   private urlFromStdout: Promise<string> | null = null;
@@ -47,9 +47,9 @@ export class SidecarManager implements vscode.Disposable {
   async ensureRunning(explicitUrl: string | undefined, command?: string[]): Promise<SidecarEndpoint> {
     if (explicitUrl) {
       if (await this.isHealthy(explicitUrl)) {
-        // En kvarlämnad äldre sidecar svarar friskt men saknar nya endpoints -
-        // byt ut den. Dev-override hoppar över kontrollen (dotnet run stämplar
-        // ingen version).
+        // An older sidecar left behind answers healthily but lacks the newer
+        // endpoints, so replace it. A development override skips the check,
+        // because `dotnet run` stamps no version.
         if (command?.length || !(await this.isStale(explicitUrl))) {
           return { url: explicitUrl, token: this.ownUrl === explicitUrl ? this.ownToken : process.env.SQLDBGR_TOKEN };
         }
@@ -63,7 +63,7 @@ export class SidecarManager implements vscode.Disposable {
       return { url: explicitUrl, token: this.ownToken };
     }
 
-    // Egen sidecar per fönster på slumpport
+    // One sidecar per window, on a random port.
     if (this.isOwnProcessAlive() && this.ownUrl && await this.isHealthy(this.ownUrl)) {
       return { url: this.ownUrl, token: this.ownToken };
     }
@@ -77,7 +77,7 @@ export class SidecarManager implements vscode.Disposable {
     return this.proc !== null && this.proc.exitCode === null;
   }
 
-  /** Sidecaren skriver "SQLDBGR_SIDECAR_URL=http://127.0.0.1:<port>" när den lyssnar. */
+  /** The sidecar writes "SQLDBGR_SIDECAR_URL=http://127.0.0.1:<port>" once it listens. */
   private async waitForUrl(): Promise<string> {
     const timeout = new Promise<never>((_, reject) => setTimeout(() => {
       this.output?.show(true);
@@ -91,13 +91,13 @@ export class SidecarManager implements vscode.Disposable {
       const health = await new SidecarClient(sidecarUrl).health();
       return health.version !== this.expectedVersion;
     } catch {
-      return true; // svarar men utan version = gammal
+      return true; // answers, but with no version, so it is old
     }
   }
 
   private async replaceStale(sidecarUrl: string): Promise<void> {
     this.channel().appendLine(`[version] sidecar at ${sidecarUrl} is not version ${this.expectedVersion} - restarting`);
-    try { await new SidecarClient(sidecarUrl).shutdown(); } catch { /* gammal utan /shutdown */ }
+    try { await new SidecarClient(sidecarUrl).shutdown(); } catch { /* old, with no /shutdown */ }
     this.proc?.kill();
     this.proc = null;
     const deadline = Date.now() + 5000;
@@ -124,11 +124,11 @@ export class SidecarManager implements vscode.Disposable {
   }
 
   /**
-   * Hämtar en ASP.NET Core 8-runtime via .NET Install Tool-extensionen
-   * (ms-dotnettools.vscode-dotnet-runtime). Den laddar ner runtimen till en
-   * privat mapp vid första anropet och svarar direkt med sökvägen därefter -
-   * användaren behöver alltså inte ha .NET installerat. Om extensionen
-   * saknas (t.ex. i dev-hosten) provas systemets `dotnet`.
+   * Gets an ASP.NET Core 8 runtime through the .NET Install Tool extension
+   * (ms-dotnettools.vscode-dotnet-runtime). It downloads the runtime into a
+   * private folder on the first call and answers with the path immediately
+   * after, so the user does not need .NET installed. Without that extension,
+   * for example in the development host, the system `dotnet` is tried.
    */
   private async acquireDotnet(): Promise<string> {
     try {
@@ -155,10 +155,10 @@ export class SidecarManager implements vscode.Disposable {
     const [exe, ...args] = command;
     this.channel().appendLine(`[start] ${exe} ${args.join(' ')}`);
 
-    // Auth-token per process: bara den här extensionen kan prata med sidecaren.
+    // One auth token per process: only this extension can talk to the sidecar.
     this.ownToken = randomBytes(24).toString('hex');
-    // shell krävs för npx.cmd på Windows; en exe-sökväg ska INTE gå via shell
-    // (sökvägar med mellanslag går sönder av shell-quoting)
+    // A shell is required for npx.cmd on Windows. An executable path must NOT
+    // go through a shell: shell quoting breaks paths containing spaces.
     this.proc = spawn(exe, args, {
       shell: process.platform === 'win32' && exe === 'npx',
       env: { ...process.env, SQLDBGR_TOKEN: this.ownToken }

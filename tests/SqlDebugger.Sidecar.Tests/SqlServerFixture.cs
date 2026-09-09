@@ -4,18 +4,19 @@ using Xunit;
 
 namespace SqlDebugger.Sidecar.Tests;
 
-/// <summary>Delas av alla klasser som rör servern. Med varsin IClassFixture
-/// kör klasserna parallellt mot SAMMA databas och krockar på objekt testerna
-/// själva skapar ("There is already an object named ..."), utöver att de
-/// applicerar schemat samtidigt.</summary>
+/// <summary>Shared by every class that touches the server. With an
+/// IClassFixture each, the classes run in parallel against the SAME database and
+/// collide on the objects the tests create themselves ("There is already an
+/// object named ..."), on top of applying the schema at the same time.</summary>
 [CollectionDefinition(Name)]
 public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>
 {
     public const string Name = "sqlserver";
 }
 
-/// <summary>Skapar testdatabasen. ConnectionString är null när
-/// SQLDBGR_TEST_CONNECTION saknas - integrationstesterna hoppas då över.</summary>
+/// <summary>Creates the test database. ConnectionString is null when
+/// SQLDBGR_TEST_CONNECTION is not set, and the integration tests then skip
+/// themselves.</summary>
 public sealed class SqlServerFixture : IAsyncLifetime
 {
     public const string DatabaseName = "sqldbgr_test";
@@ -43,7 +44,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
         }
     }
 
-    /// <summary>SQL Server i en service-container kan behöva en stund efter "healthy".</summary>
+    /// <summary>SQL Server can need a moment after it reports itself healthy.</summary>
     private static async Task<SqlConnection> OpenWithRetryAsync(string connectionString)
     {
         var deadline = DateTime.UtcNow.AddSeconds(120);

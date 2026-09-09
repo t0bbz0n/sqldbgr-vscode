@@ -4,14 +4,15 @@ using Xunit;
 
 namespace SqlDebugger.Sidecar.Tests;
 
-/// <summary>Kör mot en riktig SQL Server (SQLDBGR_TEST_CONNECTION). Verifierar
-/// pausmekaniken, abort, exception-stopp, output och modulläge end-to-end.</summary>
+/// <summary>Runs against a real SQL Server (SQLDBGR_TEST_CONNECTION). Checks the
+/// pause mechanism, abort, stopping on an exception, output and module mode
+/// end to end.</summary>
 [Collection(SqlServerCollection.Name)]
 public class RunnerIntegrationTests(SqlServerFixture fixture)
 {
     private string Cs => fixture.ConnectionString ?? throw new InvalidOperationException();
 
-    private void RequireSqlServer() => Skip.If(fixture.ConnectionString is null, "SQLDBGR_TEST_CONNECTION är inte satt");
+    private void RequireSqlServer() => Skip.If(fixture.ConnectionString is null, "SQLDBGR_TEST_CONNECTION is not set");
 
     [SkippableFact]
     public async Task Breakpoint_PausesBeforeStatement_AndLocalsShowPriorState()
@@ -22,7 +23,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         var (line, reason) = await run.ExpectPausedAsync();
         Assert.Equal(2, line);
         Assert.Equal("breakpoint", reason);
-        Assert.Equal("1", (await run.LocalsAsync())["@x"]); // före rad 2
+        Assert.Equal("1", (await run.LocalsAsync())["@x"]); // before line 2
 
         await run.Runner.SignalAsync("continue");
         await run.ExpectAsync("terminated");
@@ -68,7 +69,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         await run.Runner.SignalAsync("stepOver");
         Assert.Equal((3, "step"), await run.ExpectPausedAsync());
         await run.Runner.SignalAsync("stepOver");
-        // virtuellt slutstopp: sista raden, med slutläget i Locals
+        // The virtual final stop: the last line, with the final state in Locals.
         var (endLine, _) = await run.ExpectPausedAsync();
         Assert.Equal(3, endLine);
         Assert.Equal("3", (await run.LocalsAsync())["@x"]);
@@ -80,10 +81,10 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
     public async Task PrintAndResultSets_ReachOutput()
     {
         RequireSqlServer();
-        var run = await DebugRun.StartAsync(Cs, "PRINT 'hej från print';\nSELECT 42 AS Answer, N'åäö' AS Text;", []);
+        var run = await DebugRun.StartAsync(Cs, "PRINT 'hello from print';\nSELECT 42 AS Answer, N'\u00e5\u00e4\u00f6' AS Text;", []);
         await run.ExpectAsync("terminated");
-        Assert.Contains(run.Outputs, o => o.Contains("hej från print"));
-        Assert.Contains(run.Outputs, o => o.Contains("Answer") && o.Contains("42") && o.Contains("åäö"));
+        Assert.Contains(run.Outputs, o => o.Contains("hello from print"));
+        Assert.Contains(run.Outputs, o => o.Contains("Answer") && o.Contains("42") && o.Contains("\u00e5\u00e4\u00f6"));
     }
 
     [SkippableFact]
@@ -147,11 +148,11 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         var run = await DebugRun.StartAsync(Cs, proc, [], mode: "module",
             parameters: new() { ["@a"] = "5", ["@b"] = "10", ["@when"] = "2024-01-31", ["@result"] = null });
 
-        // RETURN är ett tvingat slutstopp i modulläge: returvärde + OUTPUT synliga
+        // RETURN is a forced final stop in module mode: the return value and OUTPUT are visible.
         var (line, _) = await run.ExpectPausedAsync();
         Assert.Equal(6, line);
         var locals = await run.LocalsAsync();
-        Assert.Equal("15", locals["@result"]);   // INT + INT, inte '510'
+        Assert.Equal("15", locals["@result"]);   // INT + INT, not '510'
         Assert.Equal("7", locals["@__dbg_return"]);
         Assert.StartsWith("2024-01-31", locals["@when"]); // ISO via stil 126
 
@@ -160,8 +161,9 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Contains(run.Outputs, o => o.Contains("return value = 7") && o.Contains("@result = 15"));
     }
 
-    /// <summary>Två VS Code-fönster mot samma databas är helt normalt, och
-    /// __dbg-tabellerna delas. Sessionerna måste hållas isär på SessionId.</summary>
+    /// <summary>Two VS Code windows against one database is entirely ordinary,
+    /// and the __dbg tables are shared. Only SessionId keeps the sessions
+    /// apart.</summary>
     [SkippableFact]
     public async Task TwoConcurrentSessions_DoNotSeeEachOthersState()
     {
@@ -172,7 +174,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         await first.ExpectPausedAsync();
         await second.ExpectPausedAsync();
 
-        // Var och en ser bara sina egna variabler.
+        // Each one sees only its own variables.
         var firstLocals = await first.LocalsAsync();
         var secondLocals = await second.LocalsAsync();
         Assert.Equal("111", firstLocals["@a"]);
@@ -180,7 +182,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Equal("222", secondLocals["@b"]);
         Assert.DoesNotContain("@a", secondLocals.Keys);
 
-        // Att fortsätta den ena får inte röra den andra.
+        // Continuing one must not touch the other.
         await first.Runner.SignalAsync("continue");
         await first.ExpectAsync("terminated");
         Assert.Equal("222", (await second.LocalsAsync())["@b"]);
@@ -192,8 +194,8 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Contains(second.Outputs, o => o.Contains("223"));
     }
 
-    /// <summary>transaction: commit är motsatsen till rollback-läget och den
-    /// enda inställningen som med flit lämnar kvar ändringar.</summary>
+    /// <summary>transaction: commit is the opposite of rollback mode, and the one
+    /// setting that deliberately leaves changes behind.</summary>
     [SkippableFact]
     public async Task TransactionCommit_KeepsChanges()
     {
@@ -213,15 +215,16 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Equal(7, await check.ExecuteScalarAsync<int>("SELECT TOP 1 Value FROM dbo.CommitProbe"));
     }
 
-    /// <summary>Pause-knappen sätter kommandot till stepOver på en batch som
-    /// redan kör, och pausloopen stannar då vid nästa statement oavsett
-    /// breakpoints. Utan det finns ingen väg att stanna en långkörande batch.</summary>
+    /// <summary>The Pause button sets the command to stepOver on a batch that is
+    /// already running, and the pause loop then stops at the next statement
+    /// whatever the breakpoints say. Without it there is no way to stop a
+    /// long-running batch.</summary>
     [SkippableFact]
     public async Task Pause_StopsARunningBatchAtTheNextStatement()
     {
         RequireSqlServer();
-        // WAITFOR ger ett fönster att hinna signalera i; utan det kan batchen
-        // vara klar innan signalen når fram och testet bli tidsberoende.
+        // The WAITFOR gives a window to signal into. Without it the batch could
+        // finish before the signal arrives, and the test would turn on timing.
         var run = await DebugRun.StartAsync(Cs, string.Join("\n", new[]
         {
             "DECLARE @x INT = 0;",
@@ -230,16 +233,17 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
             "WAITFOR DELAY '00:00:02';",
             "SET @x = 2;",
             "SELECT @x AS X;"
-        }), []);   // inga breakpoints: batchen kör fritt
+        }), []);   // no breakpoints: the batch runs freely
 
         await run.Runner.SignalAsync("stepOver");
 
         var (line, reason) = await run.ExpectPausedAsync();
-        // Sidecaren rapporterar "step"; etiketten "pause" sätter adaptern själv
-        // när det var Pause-knappen som skickade signalen.
+        // The sidecar reports "step"; the "pause" label is the adapter's own,
+        // when it was the Pause button that sent the signal.
         Assert.Equal("step", reason);
-        // Var den stannade beror på hur långt batchen hunnit när signalen kom;
-        // det som räknas är att den stannade före slutet och gick att köra vidare.
+        // Where it stopped depends on how far the batch had got when the signal
+        // arrived. What counts is that it stopped before the end and could be
+        // resumed.
         Assert.InRange(line, 1, 5);
 
         await run.Runner.SignalAsync("continue");
@@ -247,9 +251,9 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Contains(run.Outputs, o => o.Contains("2"));
     }
 
-    /// <summary>debugDatabase finns för miljöer där man inte får skapa objekt i
-    /// måldatabasen. Då måste hela mekaniken fungera med __dbg någon
-    /// annanstans - och måldatabasen får inte röras.</summary>
+    /// <summary>debugDatabase exists for environments where you may not create
+    /// objects in the target database. The whole mechanism then has to work with
+    /// __dbg somewhere else, and the target database must not be touched.</summary>
     [SkippableFact]
     public async Task DebugDatabase_KeepsTheSchemaOutOfTheTargetDatabase()
     {
@@ -260,8 +264,8 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         {
             await master.ExecuteAsync($"IF DB_ID('{other}') IS NULL CREATE DATABASE {other}");
         }
-        // Måldatabasen ska inte ha något __dbg efteråt; städa bort spår från
-        // tidigare tester så assertionen betyder något.
+        // The target database must hold no __dbg afterwards. Clear traces from
+        // earlier tests so the assertion means something.
         await using (var target = new SqlConnection(Cs))
             await target.ExecuteAsync("""
                 IF SCHEMA_ID('__dbg') IS NOT NULL
@@ -291,9 +295,9 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
             "SELECT COUNT(*) FROM sys.schemas WHERE name = '__dbg'"));
     }
 
-    /// <summary>Aliastyper (CREATE TYPE ... FROM) är vanliga i äldre scheman.
-    /// De går att DECLARE:a men CONVERT tar bara systemtyper, så en genererad
-    /// TRY_CONVERT(min_typ, ...) fällde hela batchen redan vid kompileringen.</summary>
+    /// <summary>Alias types (CREATE TYPE ... FROM) are common in older schemas.
+    /// They can be DECLAREd, but CONVERT accepts only system types, so a generated
+    /// TRY_CONVERT(my_type, ...) failed the whole batch at compile time.</summary>
     [SkippableFact]
     public async Task ModuleMode_UserDefinedAliasTypes()
     {
@@ -323,13 +327,13 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Equal("12.50", locals["@amount"]);
         Assert.Equal("dbo", locals["@sName"]);
 
-        // Overrides är den väg som genererade CONVERT till aliastypen. Assignment
-        // konverterar implicit till variabelns egen typ.
+        // Overrides is the path that generated a CONVERT to the alias type.
+        // Assignment converts implicitly to the variable's own type.
         await run.Runner.SetVariableAsync("@sMotnr", "M-2");
         Assert.Equal("M-2", (await run.LocalsAsync())["@sMotnr"]);
 
-        // Modulläge har ett tvingat slutstopp så returvärde och OUTPUT syns
-        // innan sessionen tar slut - SELECT:en har då redan kört.
+        // Module mode has a forced final stop, so the return value and OUTPUT are
+        // visible before the session ends; the SELECT has already run by then.
         await run.Runner.SignalAsync("continue");
         var (endLine, _) = await run.ExpectPausedAsync();
         Assert.Equal(7, endLine);
@@ -343,12 +347,13 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
     public async Task PauseInsideUserTransaction_DoesNotDeadlock()
     {
         RequireSqlServer();
-        // Regression: Pause skrev tidigare i Control inne i användarens transaktion,
-        // och X-låset blockerade sidecarens continue-signal för evigt.
+        // A regression test: Pause used to write to Control inside the user's
+        // transaction, and the exclusive lock blocked the sidecar's continue
+        // signal forever.
         var run = await DebugRun.StartAsync(Cs,
             "BEGIN TRAN;\nINSERT INTO dbo.AbortProbe VALUES (10);\nSELECT 1 AS InsideTran;\nROLLBACK;", [3]);
         Assert.Equal(3, (await run.ExpectPausedAsync()).line);
-        Assert.NotNull(await run.LocalsAsync()); // NOLOCK-läsning får inte blockera
+        Assert.NotNull(await run.LocalsAsync()); // a NOLOCK read must not block
         await run.Runner.SignalAsync("continue");
         await run.ExpectAsync("terminated");
     }
@@ -385,7 +390,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         var run = await DebugRun.StartAsync(Cs, "DECLARE @i INT = 0;\nWHILE @i < 5 SET @i = @i + 1;\nSELECT @i;", [],
             breakpoints: [new DebugRun.Bp(2, HitCondition: ">= 4")]);
         await run.ExpectPausedAsync();
-        Assert.Equal("3", (await run.LocalsAsync())["@i"]); // fjärde träffen
+        Assert.Equal("3", (await run.LocalsAsync())["@i"]); // the fourth hit
         await run.Runner.SignalAsync("continue");
         await run.ExpectPausedAsync();
         Assert.Equal("4", (await run.LocalsAsync())["@i"]);
@@ -459,7 +464,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
                 RETURN 0;
             END
             """;
-        // Breakpoint på rad 6 (SET @result) - alltså inuti kroppen, inte ett slutstopp
+        // A breakpoint on line 6 (SET @result): inside the body, not a final stop.
         var run = await DebugRun.StartAsync(Cs, proc, [6], mode: "module",
             parameters: new() { ["@a"] = "5", ["@b"] = "10", ["@result"] = null });
 
@@ -467,8 +472,8 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Equal(6, line);
         Assert.Equal("breakpoint", reason);
         var atBreakpoint = await run.LocalsAsync();
-        Assert.Equal("15", atBreakpoint["@sum"]);      // raden före har körts
-        Assert.Null(atBreakpoint["@result"]);          // raden vi står på har inte
+        Assert.Equal("15", atBreakpoint["@sum"]);      // the line before has run
+        Assert.Null(atBreakpoint["@result"]);          // the line we are on has not
 
         await run.Runner.SignalAsync("continue");
         var (returnLine, _) = await run.ExpectPausedAsync(); // RETURN = tvingat slutstopp
@@ -498,7 +503,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         var run = await DebugRun.StartAsync(Cs, proc, [], stopOnEntry: true, mode: "module",
             parameters: new() { ["@a"] = "5", ["@b"] = "10", ["@result"] = null });
 
-        Assert.Equal((4, "entry"), await run.ExpectPausedAsync()); // första statementet i kroppen
+        Assert.Equal((4, "entry"), await run.ExpectPausedAsync()); // the first statement in the body
         await run.Runner.SignalAsync("stepOver");
         Assert.Equal((5, "step"), await run.ExpectPausedAsync());
         Assert.Equal("0", (await run.LocalsAsync())["@sum"]);
@@ -536,7 +541,7 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Equal("3", (await run.LocalsAsync())["@i"]);
 
         await run.Runner.SignalAsync("continue");
-        var (endLine, _) = await run.ExpectPausedAsync(); // slut på kroppen = tvingat slutstopp
+        var (endLine, _) = await run.ExpectPausedAsync(); // the end of the body is a forced final stop
         Assert.Equal(9, endLine);
         Assert.Equal("5", (await run.LocalsAsync())["@i"]);
 

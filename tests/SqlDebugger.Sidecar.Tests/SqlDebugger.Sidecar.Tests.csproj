@@ -19,14 +19,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Runnern läser schemat från AppContext.BaseDirectory/Db -->
+    <!-- The runner reads the schema from AppContext.BaseDirectory/Db -->
     <Content Include="..\..\sidecar\Db\DebugSchema.sql" Link="Db\DebugSchema.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Bara för att sidecaren ska BYGGAS med testerna. Ingen referens till
-         dess assembly: SidecarProcess startar den som en egen process, och
-         `dotnet run` inifrån `dotnet test` låser sig mot det pågående bygget. -->
+    <!-- Only so the sidecar is BUILT along with the tests. No reference to its
+         assembly: SidecarProcess starts it as a process of its own, and
+         `dotnet run` from inside `dotnet test` deadlocks against the build
+         already under way. -->
     <ProjectReference Include="../../sidecar/SqlDebugger.Sidecar.csproj"
                       ReferenceOutputAssembly="false"
                       Private="false" />

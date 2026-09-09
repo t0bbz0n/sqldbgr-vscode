@@ -7,12 +7,13 @@ on:
   pull_request:
 
 permissions:
-  contents: write # för release-steget vid taggar; övriga körningar läser bara
+  contents: write # for the release step on tags; every other run only reads
 
 jobs:
-  # Enhetstester (analysatorn) + integrationstester av pausmekaniken mot en
-  # riktig SQL Server. Det enda som verifierar runtime-beteendet
-  # (Pause/abort/exception-stopp/modulläge) automatiskt.
+  # Unit tests for the analyzer, plus integration tests of the pause mechanism
+  # against a real SQL Server. This is the only thing that checks the runtime
+  # behaviour - pausing, abort, stopping on an exception, module mode -
+  # automatically.
   test:
     runs-on: ubuntu-latest
     # A hung test must fail in bounded time, not sit on a runner for hours.
@@ -89,8 +90,9 @@ jobs:
         with:
           node-version: 20
 
-      # Patch räknas upp per bygge (major.minor från package.json + run_number)
-      # så varje VSIX går att särskilja; vid v*-taggar gäller taggens version.
+      # The patch counts up per build - major.minor from package.json plus the
+      # run number - so every VSIX is distinguishable. On a v* tag the tag's
+      # version wins.
       - name: Compute build version
         id: version
         run: |
@@ -109,9 +111,9 @@ jobs:
       - name: Build sidecar
         run: dotnet build sidecar -c Release
 
-      # Valideras på varje push men laddas bara upp vid release (taggar) -
-      # sidecaren buntas numera i VSIX:en, så tarballen behövs bara för
-      # npm-publicering/fristående körning. prepack kör dotnet publish.
+      # Validated on every push but only uploaded on a release tag. The sidecar
+      # is bundled in the VSIX now, so the tarball is only needed for publishing
+      # to npm or running it standalone. prepack runs dotnet publish.
       - name: Pack sidecar npm package
         working-directory: sidecar-npm
         run: npm pack
@@ -122,8 +124,8 @@ jobs:
           npm ci
           npm test
 
-      # Sidecaren buntas in i VSIX:en; extensionen hämtar .NET-runtimen
-      # själv via ms-dotnettools.vscode-dotnet-runtime vid första körningen
+      # The sidecar is bundled into the VSIX. The extension fetches the .NET
+      # runtime itself through ms-dotnettools.vscode-dotnet-runtime on first use.
       - name: Bundle sidecar into extension
         run: dotnet publish sidecar -c Release -o extension/sidecar-dist -p:Version="${{ steps.version.outputs.version }}"
 

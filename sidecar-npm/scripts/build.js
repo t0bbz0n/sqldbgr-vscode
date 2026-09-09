@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Publicerar sidecaren till dist/ med paketets version stämplad i DLL:n,
-// så /health rapporterar samma version som npm-paketet. Körs via npm run
-// build (cross-platform - shell-varianter av $npm_package_version funkar
-// inte på Windows).
+// Publishes the sidecar into dist/ with the package's version stamped into the
+// DLL, so /health reports the same version as the npm package. Run through npm
+// run build, cross-platform: shell expansions of $npm_package_version do not
+// work on Windows.
 'use strict';
 
 const { execFileSync } = require('child_process');

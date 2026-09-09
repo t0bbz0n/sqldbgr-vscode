@@ -10,18 +10,19 @@ for (var i = 0; i < args.Length - 1; i++)
     if (args[i] == "--port" && int.TryParse(args[i + 1], out var parsed))
         port = parsed;
 
-// Windows-1252-fallback för äldre .sql-filer (svenska åäö utan UTF-8)
+// A Windows-1252 fallback for older .sql files that are not UTF-8.
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls($"http://127.0.0.1:{port}"); // --port 0 = slumpport (en sidecar per VS Code-fönster)
-// ASP.NET:s info-loggning fyller annars output-kanalen i VS Code
+builder.WebHost.UseUrls($"http://127.0.0.1:{port}"); // --port 0 is a random port: one sidecar per VS Code window
+// ASP.NET's info logging would otherwise fill the output channel in VS Code.
 builder.Logging.SetMinimumLevel(args.Contains("--verbose") ? LogLevel.Information : LogLevel.Warning);
 var app = builder.Build();
 
-// Auth: extensionen ger en token per start (SQLDBGR_TOKEN). Utan den kan varje
-// lokal process läsa filer via /inspect och starta sessioner med användarens
-// inloggning. Saknas variabeln (egenstartad sidecar) körs utan auth.
+// Auth: the extension supplies one token per start (SQLDBGR_TOKEN). Without it
+// any local process could read files through /inspect and start sessions under
+// the user's login. If the variable is missing, which means a sidecar someone
+// started themselves, it runs without auth.
 var token = Environment.GetEnvironmentVariable("SQLDBGR_TOKEN");
 if (!string.IsNullOrEmpty(token))
 {
@@ -37,7 +38,7 @@ if (!string.IsNullOrEmpty(token))
     });
 }
 
-// Extensionen läser den faktiska adressen från stdout när porten är slumpad.
+// The extension reads the actual address from stdout when the port is random.
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     var address = app.Services.GetRequiredService<IServer>()
@@ -47,13 +48,14 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
 var sessions = new ConcurrentDictionary<Guid, DebugSessionRunner>();
 
-// Extensionen probar denna för att avgöra om sidecaren redan kör.
-// Versionen stämplas vid publish (-p:Version=...) så man ser vilket bygge som kör.
+// The extension probes this to tell whether a sidecar is already running. The
+// version is stamped at publish time (-p:Version=...), so it is always clear
+// which build is answering.
 var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "sqldbgr-sidecar", version }));
 
-// Hittar en ev. funktions-/procedurdefinition i filen så extensionen kan
-// erbjuda "debugga kroppen" och fråga efter parametervärden.
+// Finds a function or procedure definition in the file, if there is one, so the
+// extension can offer to debug the body and ask for parameter values.
 app.MapPost("/inspect", async (InspectRequest req) =>
 {
     var source = await ReadSourceAsync(req.ProgramPath);
@@ -62,18 +64,19 @@ app.MapPost("/inspect", async (InspectRequest req) =>
     {
         module = analyzer.InspectModule(source),
         parseErrors = analyzer.GetParseErrors(source),
-        // spans så klienten kan mappa breakpoints inuti flerradiga statements
+        // Spans, so the client can map breakpoints inside multi-line statements.
         statements = analyzer.Instrument(source, req.ProgramPath).StmtToSpan
             .Select(kv => new { stmtId = kv.Key, kv.Value.Line, kv.Value.EndLine })
     });
 });
 
-// Parsar och instrumenterar men kör INTE - klienten sätter breakpoints först
-// och anropar sedan /run (DAP configurationDone).
+// Parses and instruments but does NOT run: the client sets breakpoints first and
+// then calls /run (DAP configurationDone).
 app.MapPost("/session/start", async (StartSessionRequest req) =>
 {
-    // Anslut tidigt: ger ett begripligt fel direkt, och databasnamnet behövs för
-    // att kvalificera __dbg-anropen så USE i scriptet inte bryter pauserna.
+    // Connect early: it gives a comprehensible error straight away, and the
+    // database name is needed to qualify the __dbg calls, so a USE in the script
+    // cannot break the pauses.
     string database;
     try
     {
@@ -85,7 +88,7 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
     {
         return Results.BadRequest(new { message = $"Could not connect: {ex.Message}" });
     }
-    // __dbg-schemat kan läggas i en annan databas (miljöer utan DDL-rätt i måldatabasen)
+    // The __dbg schema can live in another database, for environments without DDL rights in the target.
     var debugDatabase = string.IsNullOrWhiteSpace(req.DebugDatabase) ? database : req.DebugDatabase;
     var debugSchema = $"[{debugDatabase.Replace("]", "]]")}].__dbg";
 
@@ -99,8 +102,9 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
         return Results.BadRequest(new { message = "Parse errors", errors = instrumented.Errors });
 
     var options = new DebugSessionOptions(req.Mode, req.Transaction ?? "none", debugDatabase);
-    // Params och Breakpoints är valfria i JSON:en; utan ?? [] blir de null och
-    // körningen dör på en naken NullReferenceException långt därifrån.
+    // Params and Breakpoints are optional in the JSON. Without the ?? [] they
+    // arrive as null and the run dies on a bare NullReferenceException, far
+    // from here.
     var runner = new DebugSessionRunner(req.ConnectionString, instrumented, options, req.Params ?? []);
     sessions[runner.SessionId] = runner;
 
@@ -115,7 +119,7 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
 app.MapPost("/session/{id:guid}/run", (Guid id, RunRequest req) =>
 {
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
-    // Batchen körs i bakgrunden - den blockerar i __dbg.Pause tills klienten signalerar
+    // The batch runs in the background; it blocks in __dbg.Pause until the client signals.
     return runner.TryStart(req.StopOnEntry) ? Results.Ok() : Results.Conflict();
 });
 
@@ -140,7 +144,7 @@ app.MapPost("/session/{id:guid}/variables", async (Guid id, SetVariableRequest r
     return Results.Ok();
 });
 
-// Hover/Watch: uttryck utvärderas mot fångade locals på en egen connection
+// Hover and Watch: expressions are evaluated against the captured locals on a connection of their own.
 app.MapPost("/session/{id:guid}/evaluate", async (Guid id, EvaluateRequest req) =>
 {
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
@@ -148,8 +152,8 @@ app.MapPost("/session/{id:guid}/evaluate", async (Guid id, EvaluateRequest req) 
     return Results.Ok(new { value, error });
 });
 
-// Beskriver en befintlig session. Attach-läget kopplar upp sig mot en session
-// som redan fångats och behöver dess radkarta utan att starta något.
+// Describes an existing session. Attach mode connects to a session that has
+// already been caught, and needs its line map without starting anything.
 app.MapGet("/session/{id:guid}", (Guid id) =>
 {
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
@@ -190,7 +194,7 @@ app.MapPost("/session/{id:guid}/stop", async (Guid id) =>
     return Results.Ok();
 });
 
-// Låter en nyare extension byta ut en kvarlämnad äldre sidecar.
+// Lets a newer extension replace an older sidecar left behind.
 app.MapPost("/shutdown", (IHostApplicationLifetime lifetime) =>
 {
     lifetime.StopApplication();
@@ -199,8 +203,9 @@ app.MapPost("/shutdown", (IHostApplicationLifetime lifetime) =>
 
 app.Run();
 
-/// <summary>BOM styr om den finns; annars strikt UTF-8 med fallback till
-/// Windows-1252 - vanligt i äldre svenska .sql-filer, som annars får trasiga åäö.</summary>
+/// <summary>A byte order mark decides if there is one. Otherwise strict UTF-8,
+/// falling back to Windows-1252, which is common in older .sql files and would
+/// otherwise turn non-ASCII letters into mojibake.</summary>
 static async Task<string> ReadSourceAsync(string path)
 {
     var bytes = await File.ReadAllBytesAsync(path);

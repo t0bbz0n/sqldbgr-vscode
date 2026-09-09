@@ -3,13 +3,13 @@ import { StatementSpan } from './sidecarClient';
 export interface StatementLocation { line: number; stmtId: number; }
 
 /**
- * Mappar radnummer i en källfil till statement-ID:n från sidecarens parse.
- * En rad inuti ett flerradigt statement träffar det statementet (innersta
- * vid nästling); en rad mellan statements snappas till nästa statement NEDÅT
- * (samma beteende som VS/SSDT).
+ * Maps a line number in a source file to a statement id from the sidecar's
+ * parse. A line inside a multi-line statement hits that statement - the
+ * innermost one, where they nest. A line between statements snaps DOWN to the
+ * next statement, which is what Visual Studio and SSDT do.
  */
 export class BreakpointMapper {
-  // sourcePath -> spans sorterade på startrad
+  // sourcePath -> spans sorted by start line
   private maps = new Map<string, StatementSpan[]>();
 
   load(sourcePath: string, statements: StatementSpan[]): void {
@@ -21,7 +21,7 @@ export class BreakpointMapper {
     const map = this.maps.get(this.normalize(sourcePath));
     if (!map || map.length === 0) return null;
 
-    // innersta statement som omsluter raden (störst startrad <= raden)
+    // The innermost statement enclosing the line: the greatest start line <= it.
     let containing: StatementSpan | null = null;
     for (const s of map) {
       if (s.line <= line && line <= s.endLine) containing = s;
@@ -29,11 +29,11 @@ export class BreakpointMapper {
     }
     if (containing) return { line: containing.line, stmtId: containing.stmtId };
 
-    // annars första statement vars startrad >= klickad rad
+    // Otherwise the first statement starting at or below the clicked line.
     for (const s of map) {
       if (s.line >= line) return { line: s.line, stmtId: s.stmtId };
     }
-    return null; // klick efter sista statement - ogiltig breakpoint
+    return null; // clicked past the last statement - not a valid breakpoint
   }
 
   private normalize(p: string): string {

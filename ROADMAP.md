@@ -1,148 +1,150 @@
-# Roadmap – sqldbgr
+# Roadmap: sqldbgr
 
-Andra genomgången av kodbasen (efter fas 1). Prioriterat i faser; S/M/L =
-uppskattad insats (timmar / dag / flera dagar). Punkter markerade *Bugg*
-är fel i dagens beteende, övriga är förbättringar.
+The second pass over the codebase, after phase 1. Ordered in phases; S/M/L is
+the estimated effort (hours / a day / several days). Items marked *Bug* are
+wrong behaviour today; the rest are improvements.
 
-## Fas 1 – tillförlitlighet ✅
+## Phase 1: reliability ✅
 
-Klar (commits `1b9a242`, `26e35df`): breakpoint-handskakning + `stopOnEntry`,
-abort som dödar batchen, paus-före-semantik, PRINT/resultat i Debug Console,
-SQL-fel mappade till originalrad med exception-stopp, slutläge i modulläge,
-`USE`-säker schemakvalificering, versionskontroll av kvarlämnad sidecar.
+Done (commits `1b9a242`, `26e35df`): the breakpoint handshake and
+`stopOnEntry`, an abort that kills the batch, pause-before semantics,
+PRINT and results in the Debug Console, SQL errors mapped back to the original
+line with a stop on exception, the final state in module mode, USE-safe schema
+qualification, and a version check on a sidecar left behind.
 
-## Fas 2 – buggar hittade i andra genomgången ✅
+## Phase 2: bugs found in the second pass ✅
 
-*Klar. Punkterna behålls som beskrivning av vad som gjordes.*
+*Done. The items are kept as a description of what was changed.*
 
-1. **Upprepade stopp på samma statement missas.** `[S]` *Bugg.* Monitorn
-   känner igen en ny paus på att `PausedAtStmt` ändrats. En `WHILE` vars
-   kropp är ett enda statement pausar på samma id varje varv; blir gapet
-   mellan resume och nästa paus kortare än pollintervallet (50 ms) ser
-   monitorn aldrig `NULL` emellan och skickar inget nytt paused-event –
-   VS Code visar "kör" medan SQL står stilla. Fix: en räknare
-   `PauseSeq` i `Control` som `__dbg.Pause` stegar upp; monitorn jämför
-   den i stället för statement-id.
-2. **Modulparametrar binds som NVARCHAR.** `[S]` *Bugg.* Panelens värden
-   skickas som strängar och `AddWithValue` gör dem till `NVARCHAR`. I en
-   proc med `@a INT, @b INT` blir `@a + @b` då strängkonkatenering
-   (`'5' + '10' = '510'`), och `@d DATETIME` jämförs som text. Fix utan
-   typmappning i C#: bind som `@__p_<namn>` och låt preludet deklarera
-   `DECLARE @a INT = @__p_a;` med typtexten från signaturen – SQL Server
-   konverterar, och konverteringsfel syns som vanliga SQL-fel på rätt
-   rad. Lägg `SET DATEFORMAT ymd` i preludet så ISO-datum är entydiga.
-3. **Multi-statement TVF:er kraschar i modulläge.** `[S]` *Bugg.*
-   `RETURNS @t TABLE (...)` ger `ReturnType` av tabelltyp; vi deklarerar
-   `@__dbg_return SQL_VARIANT` och kroppens `INSERT INTO @t` får
-   kompileringsfel. Fix: deklarera `@t` från return-definitionen,
-   registrera den som tabellvariabel i Locals och rapportera den som
-   resultat.
-4. **Teckenkodning.** `[S]` *Bugg.* Filen läses som UTF-8. Äldre `.sql`
-   i Windows-1252 (vanligt i svenska kodbaser) ger trasiga åäö i
-   strängliteraler och PRINT – och det exekveras så mot databasen. Fix:
-   strikt UTF-8 med fallback till 1252 (`System.Text.Encoding.CodePages`),
-   alternativt låt extensionen skicka `files.encoding`.
-5. **En sidecar delas av alla VS Code-fönster.** `[M]` Fast port 5199:
-   fönster B med nyare extension byter ut sidecaren som fönster A
-   debuggar mot (versionskontrollen), och när A stängs dödar `dispose`
-   B:s sidecar. Fix: varje fönster startar sin egen sidecar på `--port 0`
-   (slumpport), sidecaren skriver vald port på stdout och managern
-   läser den. `sidecarUrl` blir ren override för egenstartad sidecar.
-   Tar bort hela klassen av "stale sidecar"-problem.
-6. **Capture per statement kostar även utan paus.** `[M]` Varje
-   statement kör `DELETE` + en `INSERT` per variabel + `FOR JSON` per
-   tabellvariabel + `EXEC Pause`, även med Continue och inga breakpoints.
-   En loop med tiotusen varv blir mycket långsam. Fix: en `INSERT ...
-   VALUES (…),(…)` för alla skalärer (billigt, behövs för exception-
-   stoppet) och tabellvariabler bara när det faktiskt pausas:
-   `IF [Db].__dbg.ShouldPause(@stmt_id) = 1 BEGIN <tabellcapture>; EXEC
-   Pause END` där `ShouldPause` är en scalar function som läser `Control`.
+1. **Repeated stops on the same statement were missed.** `[S]` *Bug.* The
+   monitor recognised a new pause by `PausedAtStmt` changing. A `WHILE` whose
+   body is a single statement pauses on the same id every turn, and once the
+   gap between resume and the next pause was shorter than the polling interval
+   (50 ms) the monitor never saw the `NULL` in between and sent no new paused
+   event. VS Code showed "running" while SQL stood still. Fixed with a counter,
+   `PauseSeq` in `Control`, that `__dbg.Pause` steps up and the monitor
+   compares instead of the statement id.
+2. **Module parameters were bound as NVARCHAR.** `[S]` *Bug.* The panel's
+   values are sent as strings, and `AddWithValue` made them `NVARCHAR`. In a
+   procedure with `@a INT, @b INT`, `@a + @b` became string concatenation
+   (`'5' + '10' = '510'`), and a `@d DATETIME` compared as text. Fixed without
+   type mapping in C#: bind as `@__p_<name>` and let the prelude declare
+   `DECLARE @a INT = @__p_a;` using the type text from the signature. SQL
+   Server does the conversion, and a conversion failure shows up as an ordinary
+   SQL error on the right line. `SET DATEFORMAT ymd` in the prelude keeps ISO
+   dates unambiguous.
+3. **Multi-statement table functions crashed in module mode.** `[S]` *Bug.*
+   `RETURNS @t TABLE (...)` gives a `ReturnType` of table type; we declared
+   `@__dbg_return SQL_VARIANT` and the body's `INSERT INTO @t` failed to
+   compile. Fixed by declaring `@t` from the return definition, registering it
+   as a table variable in Locals and reporting it as the result.
+4. **Character encoding.** `[S]` *Bug.* The file was read as UTF-8. An older
+   `.sql` in Windows-1252 produced mojibake in string literals and PRINT, and
+   that is what was executed against the database. Fixed with strict UTF-8 and
+   a fallback to 1252 (`System.Text.Encoding.CodePages`); alternatively the
+   extension could send `files.encoding`.
+5. **One sidecar was shared by every VS Code window.** `[M]` On a fixed port
+   5199, window B with a newer extension replaced the sidecar window A was
+   debugging against, thanks to the version check, and closing A made `dispose`
+   kill B's sidecar. Fixed: each window starts its own sidecar on `--port 0`, a
+   random port; the sidecar writes the chosen port to stdout and the manager
+   reads it. `sidecarUrl` becomes a plain override for a sidecar you started
+   yourself. This removes the whole class of stale-sidecar problems.
+6. **Capture per statement cost something even without a pause.** `[M]` Every
+   statement ran a `DELETE`, an `INSERT` per variable, a `FOR JSON` per table
+   variable and an `EXEC Pause`, even on Continue with no breakpoints. A loop
+   with ten thousand turns became very slow. Fixed with one `INSERT ...
+   VALUES (…),(…)` for all scalars, which is cheap and needed for the exception
+   stop, and table variables only when there is actually a pause:
+   `IF [Db].__dbg.ShouldPause(@stmt_id) = 1 BEGIN <table capture>; EXEC Pause
+   END`, where `ShouldPause` is a scalar function reading `Control`.
 
-## Fas 3 – vardagsupplevelse ✅
+## Phase 3: everyday experience ✅
 
-*Klar: restart utan omfrågning + `moduleFiles`, span-mappning, hover/watch,
-Pause-knapp, CodeLens + kommandon + snippets, parse-fel i Problems, Locals-polish
-(ordning, ISO-datum, hex, TABLE(n) med TOP 100), resultat i full bredd,
-mssql-profiler + SecretStorage, temp-tabeller, sidecar-logg.*
+*Done: restart without being asked again plus `moduleFiles`, span mapping,
+hover and Watch, the Pause button, CodeLens with commands and snippets, parse
+errors in Problems, Locals polish (ordering, ISO dates, hex, TABLE(n) with TOP
+100), results at full width, mssql profiles with SecretStorage, temp tables,
+and the sidecar log.*
 
-- **Restart utan omfrågning.** `[S]` Ctrl+Shift+F5 går via
-  `resolveDebugConfiguration` igen: QuickPick och parameterpanel visas
-  på nytt. Implementera `supportsRestartRequest` i adaptern (samma args)
-  och en setting `sqldbgr.moduleFiles: ask | debug | run`.
-- **Breakpoint mitt i flerradigt statement.** `[S]` Snap-down hoppar
-  till *nästa* statement; mappa via spans så rader inuti träffar det.
-- **Hover och Watch.** `[S]` `evaluate` som slår upp variabelnamn i
-  fångade locals; `type` på DAP-variablerna.
-- **Pause-knappen.** `[S]` `pauseRequest` = signalera `stepOver`.
-- **Upptäckbarhet.** `[M]` CodeLens "▷ Debugga med parametrar" ovanför
-  `CREATE PROCEDURE/FUNCTION` (kräver `onLanguage:sql`-aktivering),
-  kommandon i paletten, `configurationSnippets`.
-- **Parse-fel i Problems-panelen.** `[S]` Diagnostics i stället för dialog.
-- **Locals-polish.** `[S]` Deklarationsordning; datum via
-  `CONVERT(…, 126)` (idag språkberoende "Jan 31 2024"), `varbinary` som
-  hex (stil 1), float med full precision (stil 3); `@__dbg_return` som
-  `(returvärde)`; `TOP n` + antal för tabellvariabler.
-- **Resultatmängder i full bredd.** `[M]` Debug Console klipper vid 40
-  tecken och 100 rader. Kommando "Öppna senaste resultat" som virtuellt
-  dokument (CSV/markdown-tabell) eller en enkel grid-webview.
-- **Anslutningar via mssql-extensionen + SecretStorage.** `[M]`
-- **Temp-tabeller (`#t`) i Locals.** `[M]`
-- **Sidecar-loggen.** `[S]` Warning som default.
+- **Restart without being asked again.** `[S]` Ctrl+Shift+F5 went through
+  `resolveDebugConfiguration` again, so the QuickPick and parameter panel
+  reappeared. Implement `supportsRestartRequest` in the adapter, with the same
+  arguments, and a setting `sqldbgr.moduleFiles: ask | debug | run`.
+- **A breakpoint in the middle of a multi-line statement.** `[S]` Snap-down
+  jumped to the *next* statement; map through spans so a line inside hits it.
+- **Hover and Watch.** `[S]` An `evaluate` that looks a variable name up in the
+  captured locals, and `type` on the DAP variables.
+- **The Pause button.** `[S]` `pauseRequest` signals `stepOver`.
+- **Discoverability.** `[M]` A CodeLens "▷ Debug with parameters" above
+  `CREATE PROCEDURE/FUNCTION`, which needs `onLanguage:sql` activation,
+  commands in the palette, and `configurationSnippets`.
+- **Parse errors in the Problems panel.** `[S]` Diagnostics rather than a dialog.
+- **Locals polish.** `[S]` Declaration order; dates through `CONVERT(…, 126)`,
+  which today gives the language-dependent "Jan 31 2024"; `varbinary` as hex
+  (style 1); float at full precision (style 3); `@__dbg_return` shown as
+  `(return value)`; `TOP n` plus a count for table variables.
+- **Result sets at full width.** `[M]` The Debug Console clips at 40 characters
+  and 100 rows. An "Open last result set" command, as a virtual document with a
+  CSV or markdown table, or a simple grid webview.
+- **Connections through the mssql extension, with SecretStorage.** `[M]`
+- **Temp tables (`#t`) in Locals.** `[M]`
+- **The sidecar log.** `[S]` Warning as the default level.
 
-## Fas 4 – nya use cases ✅ (utom step-into)
+## Phase 4: new use cases ✅ (except step-into)
 
-*Klar: transaktionsläge, villkorliga breakpoints/hit counts/logpoints,
-setVariable via `__dbg.Overrides`, heartbeat + städning av föräldralösa
-sessioner, `debugDatabase`. Dessutom en omdesign av låsningen: `Control`
-skrivs bara av sidecaren och `PauseState` bara av `Pause` (allt läses NOLOCK),
-vilket rättade en latent deadlock vid paus inne i en användartransaktion.
-Kvar: step-into i stored procedures `[L]`.*
+*Done: transaction mode, conditional breakpoints with hit counts and logpoints,
+setVariable through `__dbg.Overrides`, the heartbeat and cleanup of orphaned
+sessions, and `debugDatabase`. Also a redesign of the locking: `Control` is
+written only by the sidecar and `PauseState` only by `Pause`, everything read
+with NOLOCK, which fixed a latent deadlock when pausing inside a user
+transaction. Still to come: step-into for stored procedures `[L]`.*
 
-- **Transaktionsläge ("dry run").** `[S/M]` `transaction: rollback |
-  commit | none`; rullar tillbaka vid slut/stop.
-- **Villkorliga breakpoints och logpoints.** `[M]` Sidecaren utvärderar
-  villkoret på egen connection mot fångade locals och auto-fortsätter.
-- **Ändra variabelvärden.** `[M]` `setVariable` via `__dbg.Overrides`.
-- **Step-into i stored procedures.** `[L]` Virtuella source-filer +
-  riktig stack.
-- **Heartbeat och föräldralösa sessioner.** `[S]` `LastHeartbeatUtc`
-  används inte; `Pause` ger upp efter t.ex. 60 s utan heartbeat.
-- **Debugschema i annan databas.** `[S]` För miljöer utan DDL-rätt.
+- **Transaction mode, a dry run.** `[S/M]` `transaction: rollback | commit |
+  none`, rolling back at the end or on stop.
+- **Conditional breakpoints and logpoints.** `[M]` The sidecar evaluates the
+  condition on its own connection against the captured locals, and continues
+  automatically.
+- **Changing variable values.** `[M]` `setVariable` through `__dbg.Overrides`.
+- **Step-into for stored procedures.** `[L]` Virtual source files and a real
+  call stack.
+- **The heartbeat and orphaned sessions.** `[S]` `LastHeartbeatUtc` was unused;
+  `Pause` now gives up after, say, 60 seconds without one.
+- **The debug schema in another database.** `[S]` For environments without DDL
+  rights.
 
-## Fas 5 – säkerhet, publicering, kvalitet (delvis ✅)
+## Phase 5: security, publishing, quality (partly ✅)
 
-*Klar: token-auth mellan extension och sidecar, `extension/README.md` +
-`CHANGELOG.md`, UI på engelska med svensk l10n, enhets- och integrationstester
-i CI, sidecar-loggnivå. Kvar: skärmdumpar/GIF, riktigt publisher-id,
-`@vscode/test-electron`, attach-läge.*
+*Done: token auth between the extension and the sidecar, `extension/README.md`
+and `CHANGELOG.md`, an English UI with a Swedish translation, unit and
+integration tests in CI, and the sidecar log level. Still to come: screenshots
+and a GIF, a real publisher id, `@vscode/test-electron`, and attach mode.*
 
-- **Auth mellan extension och sidecar.** `[M]` Sidecaren lyssnar på
-  127.0.0.1 men utan autentisering: varje lokal process kan läsa
-  godtyckliga filer via `/inspect` och starta sessioner med användarens
-  Windows-inloggning. Extensionen genererar en token per start, ger den
-  som miljövariabel, och alla anrop kräver `Authorization: Bearer`.
-- **Publiceringspaket.** `[M]` `extension/README.md` (det som visas i
-  Marketplace – finns inte idag), `CHANGELOG.md`, skärmdumpar/GIF av
-  F5 → paus → Locals; riktigt `publisher`-id. Beslut om UI-språk:
-  strängarna är svenska rakt igenom, Marketplace-publik förväntar sig
-  engelska (ev. med svensk `package.nls.sv.json`).
-- **Tester.** ✅ xunit-projekt med analysatortester och integrationstester
-  mot `mcr.microsoft.com/mssql/server` som service-container i CI
-  (pausmekanik, loopar, abort, exception-stopp, modulläge, TVF).
-  Återstår: `@vscode/test-electron` för mappning och panel. `[S]`
-- **Attach-läge (betaldel).** `[L]` Mekaniken ligger i ett separat repo
-  enligt beslut; det här repot har extension-punkten (`attachProvider.ts`,
-  `attachRequest`, `GET /session/{id}`) och kontraktet i
-  docs/ATTACH-PROTOCOL.md. Kvar i det andra repot: bevakningsschema med
-  inverterad spärr och atomär claim, deploy/restore av instrumenterade
-  definitioner, arm-UI, licenskontroll.
+- **Auth between the extension and the sidecar.** `[M]` The sidecar listened on
+  127.0.0.1 but without authentication, so any local process could read
+  arbitrary files through `/inspect` and start sessions under the user's login.
+  The extension now generates a token per start, passes it as an environment
+  variable, and every call requires `Authorization: Bearer`.
+- **The publishing package.** `[M]` `extension/README.md`, which is what the
+  Marketplace shows, a `CHANGELOG.md`, screenshots and a GIF of F5 → pause →
+  Locals, and a real `publisher` id.
+- **Tests.** ✅ An xunit project with analyzer tests and integration tests
+  against `mcr.microsoft.com/mssql/server` in CI: the pause mechanism, loops,
+  abort, stopping on an exception, module mode and table functions. Still to
+  come: `@vscode/test-electron` for the mapping and the panel. `[S]`
+- **Attach mode, the paid part.** `[L]` The mechanism lives in a separate
+  repository by decision. This repository holds the extension point
+  (`attachProvider.ts`, `attachRequest`, `GET /session/{id}`) and the contract
+  in docs/ATTACH-PROTOCOL.md. Left in the other repository: the watch schema
+  with its inverted gate and atomic claim, deploying and restoring instrumented
+  definitions, the arming UI, and the licence check.
 
-## Medvetna avgränsningar
+## Deliberate limits
 
-- sqlcmd-läge (`:r`, `:setvar`, `GO n`) stöds inte.
-- "(n rows affected)" visas inte – räknarna förorenas av
-  instrumenteringens egna INSERT/DELETE.
-- Pausa inne i *deployade* moduler går inte utan attach-läge;
-  scalar-UDF:er aldrig.
-- Ad hoc-SQL mot den pausade sessionens temp-tabeller är inte möjligt
-  (annan session).
+- sqlcmd mode (`:r`, `:setvar`, `GO n`) is not supported.
+- "(n rows affected)" is not shown: the counters are polluted by the
+  instrumentation's own INSERT and DELETE.
+- Pausing inside a *deployed* module is not possible without attach mode, and
+  never for a scalar UDF.
+- Ad hoc SQL against the paused session's temp tables is not possible, because
+  it would be a different session.

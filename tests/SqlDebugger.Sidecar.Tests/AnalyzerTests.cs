@@ -4,7 +4,7 @@ using Xunit;
 
 namespace SqlDebugger.Sidecar.Tests;
 
-/// <summary>Enhetstester för instrumenteringen - kräver ingen databas.</summary>
+/// <summary>Unit tests for the instrumentation; they need no database.</summary>
 public class AnalyzerTests
 {
     private readonly ScriptDomAnalyzer _analyzer = new();
@@ -13,7 +13,7 @@ public class AnalyzerTests
     {
         new TSql160Parser(true).Parse(new StringReader(sql), out var errors);
         Assert.True(errors.Count == 0,
-            "Instrumenterad SQL parsar inte: " + string.Join("; ", errors.Select(e => $"rad {e.Line}: {e.Message}")));
+            "The instrumented SQL does not parse: " + string.Join("; ", errors.Select(e => $"line {e.Line}: {e.Message}")));
     }
 
     [Fact]
@@ -38,10 +38,10 @@ public class AnalyzerTests
         Assert.Empty(r.Errors);
         var batch = Assert.Single(r.Batches);
         AssertReparses(batch.Sql);
-        // grenar utan BEGIN/END wrappas så pausen bara körs när grenen körs
+        // A branch without BEGIN/END is wrapped, so the pause only runs when the branch does.
         Assert.Contains("BEGIN\n", batch.Sql);
-        Assert.True(r.LineMap.ContainsKey(5), "statement inne i WHILE-blocket ska ha breakpoint-mappning");
-        Assert.True(r.LineMap.ContainsKey(6), "IF-gren inne i loopen ska ha breakpoint-mappning");
+        Assert.True(r.LineMap.ContainsKey(5), "a statement inside the WHILE block should have a breakpoint mapping");
+        Assert.True(r.LineMap.ContainsKey(6), "an IF branch inside the loop should have a breakpoint mapping");
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class AnalyzerTests
         var sql = "DECLARE @i INT = 0;\nDECLARE @j INT = 1;\nSET @i = @j;";
         var r = _analyzer.Instrument(sql, "/t.sql", "[Db].__dbg");
         var text = r.Batches[0].Sql;
-        Assert.True(text.IndexOf("Pause @stmt_id = 0;") < text.IndexOf("DECLARE @i INT = 0;"), "pausen ska ligga före statementet");
+        Assert.True(text.IndexOf("Pause @stmt_id = 0;") < text.IndexOf("DECLARE @i INT = 0;"), "the pause should come before the statement");
         Assert.Empty(r.ScopeMap[0]);
         Assert.Equal(["@i"], r.ScopeMap[1].Select(v => v.Name));
         Assert.Equal(["@i", "@j"], r.ScopeMap[2].Select(v => v.Name));
@@ -99,7 +99,7 @@ public class AnalyzerTests
         var ifIdx = text.IndexOf($"ShouldPause(@__dbg_sid, {stmt})");
         var tblIdx = text.IndexOf("FOR JSON AUTO", ifIdx);
         var pauseIdx = text.IndexOf($"Pause @stmt_id = {stmt}", ifIdx);
-        Assert.True(ifIdx > 0 && tblIdx > ifIdx && pauseIdx > tblIdx, "tabellcapture ska ligga inuti IF-blocket före Pause");
+        Assert.True(ifIdx > 0 && tblIdx > ifIdx && pauseIdx > tblIdx, "the table capture should be inside the IF block, before Pause");
         Assert.Contains("CONVERT(NVARCHAR(MAX), @d, 126)", text);
     }
 
@@ -112,7 +112,7 @@ public class AnalyzerTests
         var lines = batch.Sql.Split('\n');
         var divLine = Array.FindIndex(lines, l => l.Contains("2 / @x")) + 1;
         Assert.Equal(3, batch.MapLine(divLine));
-        Assert.Equal(1, batch.MapLine(1)); // prefixet mappas till batchens första rad
+        Assert.Equal(1, batch.MapLine(1)); // the prefix maps to the batch's first line
         var pauseLine = Array.FindIndex(lines, l => l.Contains("Pause @stmt_id = 2")) + 1;
         Assert.Equal(4, batch.MapLine(pauseLine));
     }
@@ -142,7 +142,7 @@ public class AnalyzerTests
         Assert.Contains("DECLARE @a INT = @__p_a;", text);
         Assert.Contains("SET @__dbg_return = (1);", text);
         Assert.Equal(["@__dbg_return", "@result"], r.ResultVariables);
-        Assert.Equal(3, r.FinalStmtIds.Count); // två RETURN + slut på kroppen
+        Assert.Equal(3, r.FinalStmtIds.Count); // two RETURNs plus the end of the body
     }
 
     [Fact]
@@ -190,7 +190,7 @@ public class AnalyzerTests
         var r = _analyzer.Instrument("DECLARE @x INT = 1;\nSELECT @x;", "/t.sql", "[Db].__dbg");
         var text = r.Batches[0].Sql;
         Assert.Contains("SELECT @x = TRY_CONVERT(INT, Value) FROM [Db].__dbg.Overrides", text);
-        Assert.True(text.IndexOf("Overrides") > text.IndexOf("Pause @stmt_id = 1"), "overrides läses efter Pause");
+        Assert.True(text.IndexOf("Overrides") > text.IndexOf("Pause @stmt_id = 1"), "overrides are read after Pause");
         AssertReparses(text);
     }
 

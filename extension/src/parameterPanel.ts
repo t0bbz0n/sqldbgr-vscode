@@ -6,12 +6,13 @@ const t = vscode.l10n.t;
 type ParamValues = Record<string, string | null>;
 
 /**
- * Visar en webview-panel med alla modulparametrar i ett formulär och
- * resolvar med värdena (null = NULL) när användaren startar, eller
- * undefined om panelen stängs/avbryts.
+ * Shows a webview panel with every module parameter in a form, and resolves
+ * with the values (null means NULL) when the user starts the run, or with
+ * undefined if the panel is closed or cancelled.
  *
- * Förifyllnad per parameter: launch-konfigens params -> senast använda
- * värden (workspaceState) -> deklarerat default i signaturen.
+ * Each field is prefilled in this order: params from the launch
+ * configuration, then the last values used (workspaceState), then the default
+ * declared in the signature.
  */
 export function collectParameters(
   context: vscode.ExtensionContext,
@@ -78,7 +79,7 @@ function prefill(
   return result;
 }
 
-/** Deklarerade defaults är literal-text: N'x' / 'x' -> x, annars som den är. */
+/** A declared default is literal text: N'x' and 'x' become x, anything else stands. */
 function stripLiteralQuotes(literal: string | null): string {
   if (literal === null) return '';
   const m = /^N?'(.*)'$/s.exec(literal.trim());

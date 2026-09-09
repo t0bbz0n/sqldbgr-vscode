@@ -7,13 +7,13 @@ using System.Text.Json;
 namespace SqlDebugger.Sidecar.Tests;
 
 /// <summary>
-/// Kör den riktiga sidecaren som extensionen kör den - `--port 0`, URL:en läst
-/// från stdout, token i miljön - och pratar HTTP med den.
+/// Runs the real sidecar the way the extension runs it - `--port 0`, the URL
+/// read from stdout, the token in the environment - and talks HTTP to it.
 ///
-/// Övriga tester driver DebugSessionRunner direkt, vilket lämnar hela ytan
-/// extensionen faktiskt använder otestad: routing, JSON-former, SSE-strömmen
-/// och auth-middlewaren. Ett fel där kompilerar, går grönt och havererar först
-/// i VS Code.
+/// The other tests drive DebugSessionRunner directly, which leaves the entire
+/// surface the extension actually uses untested: routing, JSON shapes, the SSE
+/// stream and the auth middleware. A mistake in any of those compiles, goes
+/// green, and fails first in VS Code.
 /// </summary>
 public sealed class SidecarProcess : IAsyncDisposable
 {
@@ -33,11 +33,11 @@ public sealed class SidecarProcess : IAsyncDisposable
         _output = output;
         Url = url;
         Token = token;
-        // Kort timeout: varje vanligt anrop ska falla snabbt och peka ut sig
-        // självt i stället för att stalla hela jobbet.
+        // A short timeout: an ordinary call should fail fast and name itself
+        // rather than stalling the whole job.
         _client = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromSeconds(30) };
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        // Händelseströmmen är långlivad med flit och styrs av sin egen token.
+        // The event stream is long-lived on purpose, and has a token of its own.
         _stream = new HttpClient { BaseAddress = new Uri(url), Timeout = Timeout.InfiniteTimeSpan };
         _stream.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
@@ -55,11 +55,11 @@ public sealed class SidecarProcess : IAsyncDisposable
         foreach (var arg in new[] { SidecarDll(), "--port", "0" })
             start.ArgumentList.Add(arg);
         start.Environment["SQLDBGR_TOKEN"] = token;
-        // Annars blir ett ohanterat undantag en 500 med tom body, och testet
-        // säger bara att något gick fel.
+        // Otherwise an unhandled exception is a 500 with an empty body, and the
+        // test only says that something went wrong.
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
 
-        var process = Process.Start(start) ?? throw new InvalidOperationException("kunde inte starta sidecaren");
+        var process = Process.Start(start) ?? throw new InvalidOperationException("could not start the sidecar");
 
         var url = new TaskCompletionSource<string>();
         var output = new List<string>();
@@ -75,18 +75,18 @@ public sealed class SidecarProcess : IAsyncDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        // Ingen byggtid här - DLL:en är redan byggd - så väntan får vara kort,
-        // och en process som dör vid start ska rapporteras direkt i stället för
-        // att tigas ihjäl tills timeouten går ut.
+        // No build time here, the DLL is already built, so the wait can be
+        // short. A process that dies at startup should be reported straight away
+        // rather than passed over in silence until the timeout expires.
         var timeout = Task.Delay(TimeSpan.FromSeconds(30));
         var exited = process.WaitForExitAsync();
         var finished = await Task.WhenAny(url.Task, exited, timeout);
         if (finished != url.Task)
         {
-            try { process.Kill(entireProcessTree: true); } catch { /* redan borta */ }
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
             var why = finished == exited
-                ? $"sidecaren avslutades med kod {process.ExitCode} innan den skrev sin URL"
-                : "sidecaren skrev aldrig SQLDBGR_SIDECAR_URL inom 30s";
+                ? $"the sidecar exited with code {process.ExitCode} before writing its URL"
+                : "the sidecar never wrote SQLDBGR_SIDECAR_URL within 30s";
             lock (output) throw new InvalidOperationException($"{why}:\n" + string.Join("\n", output));
         }
 
@@ -113,21 +113,21 @@ public sealed class SidecarProcess : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<T>(Json))!;
     }
 
-    /// <summary>Sidecarens senaste utskrifter, för felmeddelanden.</summary>
+    /// <summary>The sidecar's most recent output, for error messages.</summary>
     public string RecentOutput()
     {
         lock (_output) return string.Join("\n", _output.TakeLast(40));
     }
 
-    /// <summary>Utan bearer-token, så auth-middlewaren går att testa.</summary>
+    /// <summary>Without a bearer token, so the auth middleware can be tested.</summary>
     public async Task<HttpStatusCode> GetUnauthenticatedAsync(string path)
     {
         using var bare = new HttpClient { BaseAddress = new Uri(Url) };
         return (await bare.GetAsync(path)).StatusCode;
     }
 
-    /// <summary>Läser SSE-strömmen och delar upp den på tomrad, precis som
-    /// sidecarClient.ts gör. Returnerar (namn, data) per händelse.</summary>
+    /// <summary>Reads the SSE stream and splits it on a blank line, exactly as
+    /// sidecarClient.ts does. Returns (name, data) per event.</summary>
     public async IAsyncEnumerable<(string Name, string Data)> ReadEventsAsync(
         Guid sessionId,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
@@ -161,16 +161,16 @@ public sealed class SidecarProcess : IAsyncDisposable
     {
         if (response.IsSuccessStatusCode) return;
         var body = await response.Content.ReadAsStringAsync();
-        // Sidecarens egen logg är där orsaken faktiskt står; utan den säger en
-        // 500 med tom body ingenting alls.
+        // The sidecar's own log is where the reason actually is; without it a
+        // 500 with an empty body says nothing at all.
         string tail;
         lock (_output) tail = string.Join("\n", _output.TakeLast(40));
         throw new InvalidOperationException(
-            $"{what} -> {(int)response.StatusCode} {response.ReasonPhrase}: {body}\n\n--- sidecar-logg ---\n{tail}");
+            $"{what} -> {(int)response.StatusCode} {response.ReasonPhrase}: {body}\n\n--- sidecar log ---\n{tail}");
     }
 
-    /// <summary>Den färdigbyggda sidecaren. Testprojektet refererar
-    /// sidecar-projektet enbart för att få den byggd.</summary>
+    /// <summary>The already-built sidecar. The test project references the
+    /// sidecar project only so that it gets built.</summary>
     private static string SidecarDll()
     {
         var root = RepositoryRoot();
@@ -178,7 +178,7 @@ public sealed class SidecarProcess : IAsyncDisposable
             Path.Combine(root, "sidecar", "bin"), "SqlDebugger.Sidecar.dll", SearchOption.AllDirectories);
         if (matches.Length == 0)
             throw new InvalidOperationException(
-                $"hittade ingen byggd sidecar under {Path.Combine(root, "sidecar", "bin")}");
+                $"found no built sidecar under {Path.Combine(root, "sidecar", "bin")}");
         return matches.OrderByDescending(File.GetLastWriteTimeUtc).First();
     }
 
@@ -187,14 +187,14 @@ public sealed class SidecarProcess : IAsyncDisposable
         var dir = AppContext.BaseDirectory;
         while (dir is not null && !File.Exists(Path.Combine(dir, "sidecar", "SqlDebugger.Sidecar.csproj")))
             dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("hittade inte repo-roten");
+        return dir ?? throw new InvalidOperationException("could not find the repository root");
     }
 
     public async ValueTask DisposeAsync()
     {
         _client.Dispose();
         _stream.Dispose();
-        try { _process.Kill(entireProcessTree: true); } catch { /* redan borta */ }
+        try { _process.Kill(entireProcessTree: true); } catch { /* already gone */ }
         try { await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); } catch { /* strunt i det */ }
         _process.Dispose();
     }

@@ -1,0 +1,33 @@
+name: Feature request
+description: Something the debugger should be able to do and cannot
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [ROADMAP.md](https://github.com/t0bbz0n/sqldbgr-vscode/blob/main/ROADMAP.md)
+        first. Some of what looks missing is already planned, and some of it is
+        deliberately out of scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >
+        Describe the debugging session you cannot have today, rather than the
+        feature you have in mind. The problem is easier to solve well than the
+        solution is to guess at.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do instead today
+      description: The workaround, if there is one, and why it is not good enough.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you had in mind
+      description: Optional. If you already know how it should work, say so.

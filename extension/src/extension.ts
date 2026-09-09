@@ -19,29 +19,30 @@ export function activate(context: vscode.ExtensionContext) {
   const diagnostics = vscode.languages.createDiagnosticCollection('sqldbgr');
   context.subscriptions.push(diagnostics);
 
-  // Inline debug adapter - körs i extension host-processen. Enklast under utveckling;
-  // kan brytas ut till separat process senare utan API-ändringar.
+  // An inline debug adapter, running in the extension host process. It is the
+  // simplest thing during development, and can be split into its own process
+  // later without any API change.
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory('tsql', {
       createDebugAdapterDescriptor: () =>
         new vscode.DebugAdapterInlineImplementation(new TsqlDebugSession(
           // The session is over by the time this fires, so a notification is
-          // the only place the reason is still visible.
-          // The message comes from the sidecar in English, so there is
-          // nothing here to localise.
+          // the only place the reason is still visible. The message comes from
+          // the sidecar in English, so there is nothing here to localise.
           message => vscode.window.showErrorMessage(`sqldbgr: ${message}`)))
     })
   );
 
-  // Utan detta plockar VS Code ordet under muspekaren med sin egen ordgräns, och
-  // den räknar inte '@' som en del av ordet: att hovra över @sMotnr frågade efter
-  // "sMotnr", som aldrig finns i scope. Samma sak för temptabellernas '#'.
+  // Without this, VS Code picks the word under the pointer using its own word
+  // boundary, and that does not count '@' as part of the word: hovering over
+  // @sMotnr asked for "sMotnr", which is never in scope. The same goes for the
+  // '#' on temp tables.
   context.subscriptions.push(
     vscode.languages.registerEvaluatableExpressionProvider('sql', {
       provideEvaluatableExpression(document, position) {
         const line = document.lineAt(position.line).text;
-        // Variabelnamn: @x, @@ROWCOUNT, #tmp, ##global. Sök ut från pekaren i
-        // stället för att lita på ordgränsen.
+        // Variable names: @x, @@ROWCOUNT, #tmp, ##global. Search outwards from
+        // the pointer rather than trusting the word boundary.
         let start = position.character;
         while (start > 0 && /[\w$#@]/.test(line[start - 1])) start--;
         let end = position.character;
@@ -49,7 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (start === end) return undefined;
 
         const word = line.slice(start, end);
-        // Prefixet måste sitta först: "a@b" är inte en variabel.
+        // The prefix has to come first: "a@b" is not a variable.
         if (!/^[@#][\w$#@]*$/.test(word)) return undefined;
         return new vscode.EvaluatableExpression(
           new vscode.Range(position.line, start, position.line, end), word);
@@ -60,7 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.debug.registerDebugConfigurationProvider('tsql', {
       async resolveDebugConfiguration(_folder, config) {
-        // Snabbstart: F5 i en öppen .sql-fil utan launch.json
+        // The quick path: F5 in an open .sql file with no launch.json.
         if (!config.type && !config.request && !config.name) {
           const editor = vscode.window.activeTextEditor;
           if (editor?.document.languageId === 'sql') {
@@ -70,9 +71,9 @@ export function activate(context: vscode.ExtensionContext) {
             config.program = editor.document.fileName;
           }
         }
-        // Attach: en separat, licensierad extension äger mekaniken (se
-        // docs/ATTACH-PROTOCOL.md). Den fångar en körande session och vi
-        // kopplar upp oss mot den - ingen egen sidecar, ingen egen körning.
+        // Attach: a separate licensed extension owns the mechanism, see
+        // docs/ATTACH-PROTOCOL.md. It catches a running session and we connect
+        // to it. No sidecar of our own, and nothing of our own is run.
         const isAttach = config.request === 'attach' || config.mode === 'attach';
         if (isAttach) return resolveAttachConfiguration(config);
 
@@ -81,12 +82,12 @@ export function activate(context: vscode.ExtensionContext) {
           return undefined;
         }
 
-        // connectionString: launch-konfig -> SecretStorage -> settings -> fråga användaren
+        // connectionString: launch config -> SecretStorage -> settings -> ask.
         config.connectionString ||= await resolveConnectionString(context);
         if (!config.connectionString) return undefined;
 
-        // Sidecar: egen per fönster på slumpport, eller den angivna sidecarUrl.
-        // Adaptern får den faktiska adressen och auth-token via config.
+        // The sidecar: one per window on a random port, or the sidecarUrl given.
+        // The adapter gets the actual address and the auth token through config.
         if (config.autoStartSidecar !== false) {
           try {
             const sidecar = await vscode.window.withProgress(
@@ -99,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
             return undefined;
           }
         }
-        config.sidecarUrl ??= DEFAULT_SIDECAR_URL; // autoStartSidecar: false utan egen URL
+        config.sidecarUrl ??= DEFAULT_SIDECAR_URL; // autoStartSidecar: false, with no URL of its own
 
         const proceed = await inspectAndPrepare(context, config, diagnostics);
         if (!proceed) return undefined;
@@ -116,10 +117,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 /**
  * --- LICENSED FEATURE BOUNDARY ---
- * Allt attach-specifikt ligger bakom det här anropet, i en separat extension
- * som äger licenskontroll, val av modul, deploy av instrumenterad definition
- * och återställning. Lokal debugging passerar aldrig den här vägen och
- * fungerar oförändrat när extensionen inte är installerad.
+ * Everything attach-specific sits behind this call, in a separate extension
+ * that owns the licence check, choosing the module, deploying the instrumented
+ * definition and restoring it. Local debugging never comes this way, and works
+ * unchanged when that extension is not installed.
  */
 async function resolveAttachConfiguration(
   config: vscode.DebugConfiguration
@@ -137,7 +138,7 @@ async function resolveAttachConfiguration(
     program: config.program,
     debugDatabase: config.debugDatabase
   });
-  if (!caught) return undefined; // avbrutet eller inget fångat - starta ingen session
+  if (!caught) return undefined; // cancelled, or nothing caught - start no session
 
   config.request = 'attach';
   config.mode = 'attach';
@@ -145,14 +146,14 @@ async function resolveAttachConfiguration(
   config.sidecarUrl = caught.sidecarUrl;
   config.sidecarToken = caught.sidecarToken;
   config.attachSessionId = caught.sessionId;
-  config.autoStartSidecar = false; // providern äger sin sidecar
+  config.autoStartSidecar = false; // the provider owns its own sidecar
   return config;
 }
 
 /**
- * Parse-fel -> Problems-panelen (och avbruten launch). Innehåller filen en
- * CREATE FUNCTION/PROCEDURE: erbjud att debugga kroppen med parametrar
- * (modulläge) enligt settingen sqldbgr.moduleFiles.
+ * Parse errors go to the Problems panel, and the launch is cancelled. If the
+ * file holds a CREATE FUNCTION/PROCEDURE, offer to debug the body with
+ * parameters - module mode - according to the sqldbgr.moduleFiles setting.
  */
 async function inspectAndPrepare(
   context: vscode.ExtensionContext,
@@ -173,7 +174,7 @@ async function inspectAndPrepare(
     }
     module = result.module;
   } catch {
-    return true; // sidecaren nere/gammal - kör vidare som vanligt script
+    return true; // sidecar down or old - carry on as an ordinary script
   }
   if (!module) return true;
 
@@ -218,17 +219,17 @@ async function inspectAndPrepare(
     }
   }
 
-  // Parameterpanelen visar alla parametrar i ett formulär, förifyllt från
-  // launch-konfigen, senast använda värden och deklarerade defaults.
+  // The parameter panel shows every parameter in a form, prefilled from the
+  // launch config, the last values used and the declared defaults.
   if (module.parameters.length > 0) {
     const values = await collectParameters(context, module, config.params ?? {});
-    if (values === undefined) return false; // stängd/avbruten - avbryt launchen
+    if (values === undefined) return false; // closed or cancelled - abandon the launch
     config.params = values;
   }
   return true;
 }
 
-/** SecretStorage -> settings -> mssql-extensionens profiler eller inputruta. */
+/** SecretStorage -> settings -> the mssql extension's profiles, or an input box. */
 async function resolveConnectionString(context: vscode.ExtensionContext): Promise<string | undefined> {
   const stored = await context.secrets.get(SECRET_CONNECTION_KEY)
     || vscode.workspace.getConfiguration('sqldbgr').get<string>('connectionString');
@@ -261,7 +262,7 @@ async function resolveConnectionString(context: vscode.ExtensionContext): Promis
 
 /**
  * ms-mssql.mssql exponerar promptForConnection/createConnectionDetails/
- * getConnectionString. API:t är inte formellt stabilt, därför defensivt.
+ * getConnectionString. That API is not formally stable, hence the caution.
  */
 async function connectionStringFromMssql(mssql: vscode.Extension<unknown>): Promise<string | undefined> {
   try {
@@ -279,8 +280,8 @@ async function connectionStringFromMssql(mssql: vscode.Extension<unknown>): Prom
   }
 }
 
-// Fire-and-forget så launchen inte blockeras av frågan. Lösenord hör hemma i
-// SecretStorage, inte i settings.json.
+// Fire and forget, so the launch is not blocked by the question. Passwords
+// belong in SecretStorage, not in settings.json.
 function offerToSaveConnectionString(context: vscode.ExtensionContext, connectionString: string): void {
   const secure = t('Save securely');
   const workspace = t('Save in workspace settings');
@@ -347,7 +348,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
   );
 }
 
-/** "Debug with parameters" ovanför varje CREATE PROCEDURE/FUNCTION. */
+/** "Debug with parameters", above every CREATE PROCEDURE/FUNCTION. */
 class ModuleCodeLensProvider implements vscode.CodeLensProvider {
   private static readonly pattern = /^\s*CREATE\s+(?:OR\s+ALTER\s+)?(?:PROCEDURE|PROC|FUNCTION)\s+([\w\[\]."]+)/gim;
 

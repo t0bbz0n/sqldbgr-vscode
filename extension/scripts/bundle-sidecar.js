@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Publicerar sidecaren till sidecar-dist/ med extensionens version stämplad i
-// DLL:n, så /health-versionen matchar extensionen och en lokalt byggd VSIX
-// inte tolkar sin egen sidecar som en främmande, gammal instans.
+// Publishes the sidecar into sidecar-dist/ with the extension's version stamped
+// into the DLL, so the version /health reports matches the extension and a
+// locally built VSIX does not mistake its own sidecar for a stale foreign one.
 'use strict';
 
 const { execFileSync } = require('child_process');

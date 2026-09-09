@@ -6,8 +6,8 @@ using Xunit;
 
 namespace SqlDebugger.Sidecar.Tests;
 
-/// <summary>Kör ett script genom analysator + runner precis som Program.cs gör,
-/// och läser sidecar-events med timeout.</summary>
+/// <summary>Runs a script through the analyzer and the runner exactly as
+/// Program.cs does, and reads sidecar events with a timeout.</summary>
 public sealed class DebugRun
 {
     private static readonly TimeSpan EventTimeout = TimeSpan.FromSeconds(40);
@@ -34,8 +34,8 @@ public sealed class DebugRun
         string? debugDatabase = null)
     {
         var database = new SqlConnectionStringBuilder(connectionString).InitialCatalog;
-        // __dbg kan ligga i en annan databas för miljöer utan DDL-rätt i
-        // måldatabasen; sidecaren kvalificerar alla anrop med den.
+        // __dbg can live in another database, for environments without DDL
+        // rights in the target; the sidecar qualifies every call with it.
         var schemaDatabase = debugDatabase ?? database;
         var debugSchema = $"[{schemaDatabase}].__dbg";
         var analyzer = new ScriptDomAnalyzer();
@@ -54,8 +54,9 @@ public sealed class DebugRun
         return new DebugRun(runner, script);
     }
 
-    /// <summary>Väntar på nästa event med angivet namn; output-events samlas i Outputs.
-    /// Ett annat "stort" event (paused/terminated/error) än det väntade är ett testfel.</summary>
+    /// <summary>Waits for the next event with the given name; output events are
+    /// collected in Outputs. Any other significant event - paused, terminated,
+    /// error - is a test failure.</summary>
     public async Task<JsonElement> ExpectAsync(string name)
     {
         using var cts = new CancellationTokenSource(EventTimeout);
@@ -63,8 +64,8 @@ public sealed class DebugRun
         {
             SidecarEvent evt;
             try { evt = await Runner.Events.ReadAsync(cts.Token); }
-            catch (OperationCanceledException) { throw new Xunit.Sdk.XunitException($"Fick inget '{name}'-event inom {EventTimeout}. Output hittills:\n{string.Join("\n", Outputs)}"); }
-            catch (System.Threading.Channels.ChannelClosedException) { throw new Xunit.Sdk.XunitException($"Eventströmmen stängdes innan '{name}'. Output:\n{string.Join("\n", Outputs)}"); }
+            catch (OperationCanceledException) { throw new Xunit.Sdk.XunitException($"No '{name}' event within {EventTimeout}. Output so far:\n{string.Join("\n", Outputs)}"); }
+            catch (System.Threading.Channels.ChannelClosedException) { throw new Xunit.Sdk.XunitException($"The event stream closed before '{name}'. Output:\n{string.Join("\n", Outputs)}"); }
 
             var data = JsonDocument.Parse(evt.JsonData).RootElement;
             if (evt.Name == "output")
@@ -80,7 +81,7 @@ public sealed class DebugRun
                 continue;
             }
             if (evt.Name == name) return data;
-            throw new Xunit.Sdk.XunitException($"Väntade '{name}' men fick '{evt.Name}': {evt.JsonData}\nOutput:\n{string.Join("\n", Outputs)}");
+            throw new Xunit.Sdk.XunitException($"Expected '{name}' but got '{evt.Name}': {evt.JsonData}\nOutput:\n{string.Join("\n", Outputs)}");
         }
     }
 

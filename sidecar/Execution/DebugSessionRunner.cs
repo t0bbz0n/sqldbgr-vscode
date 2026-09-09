@@ -12,18 +12,19 @@ namespace SqlDebugger.Sidecar.Execution;
 public record SidecarEvent(string Name, string JsonData);
 public record LocalVar(string Name, string TypeName, string? Value);
 
-/// <summary>Breakpoint med ev. villkor, träffräkning och logpoint-meddelande
-/// (utvärderas av sidecaren mot fångade locals - ingen ominstrumentering).</summary>
+/// <summary>A breakpoint, with an optional condition, hit count and logpoint
+/// message. The sidecar evaluates them against the captured locals, so nothing
+/// has to be re-instrumented.</summary>
 public record BreakpointSpec(int StmtId, string? Condition, string? HitCondition, string? LogMessage);
 
 public record DebugSessionOptions(
     string Mode,
     string Transaction,           // none | rollback | commit
-    string DebugDatabase);        // databasen där __dbg-schemat ligger
+    string DebugDatabase);        // the database holding the __dbg schema
 
 public class DebugSessionRunner
 {
-    /// <summary>Felnummer som __dbg.Pause kastar vid abort - skiljer avbrott från riktiga fel.</summary>
+    /// <summary>The error number __dbg.Pause throws on abort, which is what separates a cancellation from a real error.</summary>
     public const int AbortErrorNumber = 50099;
     public const int HeartbeatLostErrorNumber = 50098;
     private const int MaxConsoleRows = 100;
@@ -32,7 +33,7 @@ public class DebugSessionRunner
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
 
     public Guid SessionId { get; } = Guid.NewGuid();
-    /// <summary>Radkarta och spans, för klienter som kopplar upp mot en befintlig session.</summary>
+    /// <summary>The line map and spans, for clients connecting to an existing session.</summary>
     public InstrumentedScript Script => _script;
     public ChannelReader<SidecarEvent> Events => _events.Reader;
 
@@ -66,8 +67,9 @@ public class DebugSessionRunner
         _dbg = $"[{options.DebugDatabase.Replace("]", "]]")}].__dbg";
     }
 
-    /// <summary>Startar körningen. Anropas först när klienten satt sina breakpoints
-    /// (DAP configurationDone) - annars tappas breakpoints satta före F5.</summary>
+    /// <summary>Starts the run. Not called until the client has set its
+    /// breakpoints (DAP configurationDone); otherwise breakpoints set before F5
+    /// are lost.</summary>
     public bool TryStart(bool stopOnEntry)
     {
         if (_started) return false;
@@ -94,7 +96,7 @@ public class DebugSessionRunner
                 $"INSERT INTO {_dbg}.Control (SessionId, Command, SignalSeq, ActiveBreakpoints) VALUES (@sid, @cmd, 0, @bp)",
                 new { sid = SessionId, cmd = stopOnEntry ? "entry" : "continue", bp = EffectiveBreakpointsJson() });
 
-            // Övervakningsloop på separat connection: upptäcker paus, pushar events, heartbeat
+            // The watch loop, on its own connection: notices a pause, pushes events, beats.
             _ = MonitorPauseStateAsync();
 
             if (_options.Transaction is "rollback" or "commit")
@@ -103,7 +105,7 @@ public class DebugSessionRunner
                 EmitOutput($"-- transaction: {_options.Transaction} (all changes are {(_options.Transaction == "rollback" ? "rolled back" : "committed")} when the session ends)", "console");
             }
 
-            // Kör batcharna i ordning på samma connection (SESSION_CONTEXT följer med).
+            // Run the batches in order on the same connection, so SESSION_CONTEXT carries over.
             for (var i = 0; i < _script.Batches.Count; i++)
             {
                 _currentBatch = i;
@@ -156,15 +158,15 @@ public class DebugSessionRunner
 
     private async Task ExecuteBatchAsync(SqlConnection conn, string sql)
     {
-        // CommandTimeout 0 = vänta hur länge som helst (användaren kan stå pausad i minuter).
+        // CommandTimeout 0 waits indefinitely: the user may sit paused for minutes.
         await using var cmd = new SqlCommand(sql, conn) { CommandTimeout = 0 };
-        // Binds som @__p_<namn>; modulpreludet deklarerar om dem med signaturens typ.
+        // Bound as @__p_<name>; the module prelude redeclares them with the signature's type.
         foreach (var (name, value) in _parameters)
             cmd.Parameters.AddWithValue(ScriptDomAnalyzer.BoundParameterName(name),
                 NormalizeParamValue(value) ?? DBNull.Value);
 
-        // Reader i stället för Execute så resultatmängder (SELECT) kan visas
-        // i Debug Console i stället för att kastas bort.
+        // A reader rather than Execute, so result sets from SELECT can be shown
+        // in the Debug Console instead of being thrown away.
         await using var reader = await cmd.ExecuteReaderAsync(_cts.Token);
         do
         {
@@ -184,14 +186,14 @@ public class DebugSessionRunner
         while (await reader.ReadAsync(_cts.Token))
         {
             total++;
-            if (rows.Count >= MaxStoredRows) continue; // töm resten men spara inte
+            if (rows.Count >= MaxStoredRows) continue; // drain the rest without storing it
             var row = new string?[columns.Length];
             for (var i = 0; i < columns.Length; i++)
                 row[i] = reader.IsDBNull(i) ? null : FormatCell(reader.GetValue(i));
             rows.Add(row);
         }
 
-        // Fullständig (cappad) resultatmängd till klienten för "Open result set"
+        // The full, capped result set to the client, for "Open result set".
         await EmitAsync("resultset", JsonSerializer.Serialize(new { columns, rows, total }));
 
         // Kompakt texttabell i Debug Console
@@ -223,8 +225,8 @@ public class DebugSessionRunner
         return s.Length <= MaxCellWidth ? s : s[..(MaxCellWidth - 1)] + "…";
     }
 
-    /// <summary>Modulläge: skriv returvärde och OUTPUT-parametrar till Debug Console
-    /// vid avslut - Locals försvinner med sessionen annars.</summary>
+    /// <summary>Module mode: write the return value and OUTPUT parameters to the
+    /// Debug Console at the end, because Locals disappears with the session.</summary>
     private async Task ReportResultVariablesAsync(SqlConnection conn)
     {
         if (_script.ResultVariables.Count == 0) return;
@@ -243,9 +245,10 @@ public class DebugSessionRunner
         EmitOutput(sb.ToString(), "stdout");
     }
 
-    /// <summary>SQL-fel: mappa raden i den instrumenterade batchen till originalfilen
-    /// och stanna där ("stopped on exception") så Locals (fångade före det
-    /// fallerande statementet) kan inspekteras. Continue/stop avslutar.</summary>
+    /// <summary>A SQL error: map the line in the instrumented batch back to the
+    /// original file and stop there, "stopped on exception", so Locals - captured
+    /// before the failing statement - can be inspected. Continue or stop ends
+    /// the session.</summary>
     private async Task StopOnExceptionAsync(SqlException ex)
     {
         var line = _currentBatch >= 0 ? _script.Batches[_currentBatch].MapLine(ex.LineNumber) : 0;
@@ -288,15 +291,16 @@ public class DebugSessionRunner
     public async Task SetBreakpointsAsync(IEnumerable<BreakpointSpec> specs)
     {
         _breakpoints = specs.ToDictionary(b => b.StmtId);
-        if (!_started) return; // skrivs in när Control-raden skapas vid start
+        if (!_started) return; // written when the control row is created at start
         await using var conn = new SqlConnection(_connectionString);
         await conn.ExecuteAsync(
             $"UPDATE {_dbg}.Control SET ActiveBreakpoints = @bp WHERE SessionId = @sid",
             new { bp = EffectiveBreakpointsJson(), sid = SessionId });
     }
 
-    // I modulläge stannar vi alltid på slutläget (RETURN/slut på kroppen) så
-    // returvärdet och OUTPUT-parametrarna går att se även utan breakpoints.
+    // In module mode we always stop at the final state, a RETURN or the end of
+    // the body, so the return value and OUTPUT parameters can be seen even with
+    // no breakpoints set.
     private string EffectiveBreakpointsJson() => JsonSerializer.Serialize(
         _options.Mode == "module"
             ? _breakpoints.Keys.Concat(_script.FinalStmtIds).Distinct()
@@ -305,10 +309,10 @@ public class DebugSessionRunner
     public async Task SignalAsync(string command)
     {
         if (_faulted) { _resumeAfterFault.TrySetResult(); return; }
-        // Kontrollraden skrivs in av RunAsync, som körs på en egen task, så en
-        // signal som kommer strax efter start kan hinna före den. En UPDATE som
-        // inte träffar någon rad är helt tyst: Pause-knappen ser ut att fungera
-        // och gör ingenting. Vänta in raden så länge körningen lever.
+        // The control row is written by RunAsync, which runs on its own task, so
+        // a signal arriving just after the start can get there first. An UPDATE
+        // that matches no row is completely silent: the Pause button looks like
+        // it works and does nothing. Wait for the row while the run is alive.
         while (true)
         {
             await using var conn = new SqlConnection(_connectionString);
@@ -316,15 +320,16 @@ public class DebugSessionRunner
                 $"UPDATE {_dbg}.Control SET Command = @cmd, SignalSeq = SignalSeq + 1 WHERE SessionId = @sid",
                 new { cmd = command, sid = SessionId });
             if (affected > 0) return;
-            // Ingen rad och ingen körning kvar att signalera till: sessionen är
-            // slut och raden städad. Då är det inget att vänta på.
+            // No row and no run left to signal: the session is over and the row
+            // has been cleaned up, so there is nothing to wait for.
             if (_run is null or { IsCompleted: true } || _cts.IsCancellationRequested) return;
             await Task.Delay(25);
         }
     }
 
-    /// <summary>Avbryter direkt: 'abort' får __dbg.Pause att THROW vid pauspunkten,
-    /// och cancel skickar attention till en batch som kör. Inga fler statements körs.</summary>
+    /// <summary>Cancels immediately: 'abort' makes __dbg.Pause THROW at the pause
+    /// point, and cancelling sends an attention to a batch that is running. No
+    /// further statements run.</summary>
     public async Task StopAsync()
     {
         try { if (_started && !_faulted) await SignalAsync("abort"); }
@@ -333,7 +338,7 @@ public class DebugSessionRunner
         _cts.Cancel();
     }
 
-    /// <summary>Locals läses med NOLOCK: batchen skriver dem inne i en ev. transaktion.</summary>
+    /// <summary>Locals are read with NOLOCK: the batch writes them inside a transaction, where there is one.</summary>
     public async Task<List<LocalVar>> GetLocalsAsync()
     {
         await using var conn = new SqlConnection(_connectionString);
@@ -343,8 +348,8 @@ public class DebugSessionRunner
         return rows.ToList();
     }
 
-    /// <summary>setVariable: värdet läses in av batchen efter nästa resume.
-    /// Locals uppdateras direkt så panelen speglar ändringen.</summary>
+    /// <summary>setVariable: the batch picks the value up after the next resume.
+    /// Locals is updated straight away so the panel reflects the change.</summary>
     public async Task SetVariableAsync(string name, string? value)
     {
         await using var conn = new SqlConnection(_connectionString);
@@ -380,8 +385,9 @@ public class DebugSessionRunner
                     WHERE p.SessionId = @sid
                     """, new { sid = SessionId });
 
-                // PauseSeq (inte statement-id) avgör om det är en NY paus: en loop
-                // pausar på samma id varje varv, snabbare än pollintervallet.
+                // PauseSeq, not the statement id, decides whether this is a NEW
+                // pause: a loop pauses on the same id every turn, faster than the
+                // polling interval.
                 if (state.PausedAtStmt is int stmt && state.PauseSeq != _lastPauseSeq)
                 {
                     _lastPauseSeq = state.PauseSeq;
@@ -418,9 +424,10 @@ public class DebugSessionRunner
         }
     }
 
-    /// <summary>Villkor, träffräkning och logpoints utvärderas här mot de fångade
-    /// locals (skalärer deklareras med sina typer på en egen connection).
-    /// Villkor som inte går att utvärdera räknas som sanna och rapporteras.</summary>
+    /// <summary>Conditions, hit counts and logpoints are evaluated here against
+    /// the captured locals; scalars are declared with their types on a separate
+    /// connection. A condition that cannot be evaluated counts as true and is
+    /// reported.</summary>
     private async Task<bool> ShouldStopAtBreakpointAsync(int stmtId)
     {
         if (!_breakpoints.TryGetValue(stmtId, out var bp)) return true;
@@ -450,7 +457,7 @@ public class DebugSessionRunner
                 : $"CAST(({p}) AS NVARCHAR(MAX))")) + ")";
             var result = await EvaluateAsync(expr, stmtId);
             EmitOutput(result.error is null ? result.value ?? "" : $"[logpoint] {bp.LogMessage}: {result.error}", result.error is null ? "console" : "stderr");
-            return false; // logpoints stannar inte
+            return false; // a logpoint does not stop
         }
         return true;
     }
@@ -471,8 +478,8 @@ public class DebugSessionRunner
         };
     }
 
-    /// <summary>Utvärderar ett T-SQL-uttryck med de fångade skalära locals som
-    /// deklarerade variabler (används för villkor, logpoints och hover/watch).</summary>
+    /// <summary>Evaluates a T-SQL expression with the captured scalar locals as
+    /// declared variables. Used for conditions, logpoints, hover and Watch.</summary>
     public async Task<(string? value, string? error)> EvaluateAsync(string expression, int? stmtId = null)
     {
         var locals = await GetLocalsAsync();
@@ -519,7 +526,7 @@ public class DebugSessionRunner
                 await conn.ExecuteAsync(trimmed);
         }
 
-        // Föräldralösa sessioner (sidecar som dött): heartbeaten har tystnat.
+        // Orphaned sessions, from a sidecar that died: the heartbeat has gone quiet.
         await conn.ExecuteAsync("""
             DECLARE @dead TABLE (SessionId UNIQUEIDENTIFIER);
             INSERT INTO @dead SELECT SessionId FROM __dbg.Control WHERE LastHeartbeatUtc < DATEADD(MINUTE, -2, SYSUTCDATETIME());
@@ -548,7 +555,7 @@ public class DebugSessionRunner
     private static bool IsAbort(Exception ex)
         => ex is SqlException sql && sql.Errors.Cast<SqlError>().Any(e => e.Number is AbortErrorNumber or HeartbeatLostErrorNumber);
 
-    // Värden från extensionen kommer som JsonElement via System.Text.Json.
+    // Values from the extension arrive as JsonElement, through System.Text.Json.
     private static object? NormalizeParamValue(object? value) => value is JsonElement je
         ? je.ValueKind switch
         {
