@@ -69,8 +69,8 @@ jobs:
           echo "$counters"
           total=$(sed -n 's/.*[^a-zA-Z]total="\([0-9]*\)".*/\1/p' <<<"$counters")
           skipped=$(sed -n 's/.*notExecuted="\([0-9]*\)".*/\1/p' <<<"$counters")
-          if [ "${total:-0}" -lt 47 ]; then
-            echo "::error::only ${total:-0} tests ran; the suite has at least 47"
+          if [ "${total:-0}" -lt 48 ]; then
+            echo "::error::only ${total:-0} tests ran; the suite has at least 48"
             exit 1
           fi
           if [ "${skipped:-1}" -ne 0 ]; then

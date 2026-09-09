@@ -213,6 +213,39 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Equal(7, await check.ExecuteScalarAsync<int>("SELECT TOP 1 Value FROM dbo.CommitProbe"));
     }
 
+    /// <summary>Pause-knappen sätter kommandot till stepOver på en batch som
+    /// redan kör, och pausloopen stannar då vid nästa statement oavsett
+    /// breakpoints. Utan det finns ingen väg att stanna en långkörande batch.</summary>
+    [SkippableFact]
+    public async Task Pause_StopsARunningBatchAtTheNextStatement()
+    {
+        RequireSqlServer();
+        // WAITFOR ger ett fönster att hinna signalera i; utan det kan batchen
+        // vara klar innan signalen når fram och testet bli tidsberoende.
+        var run = await DebugRun.StartAsync(Cs, string.Join("\n", new[]
+        {
+            "DECLARE @x INT = 0;",
+            "WAITFOR DELAY '00:00:02';",
+            "SET @x = 1;",
+            "WAITFOR DELAY '00:00:02';",
+            "SET @x = 2;",
+            "SELECT @x AS X;"
+        }), []);   // inga breakpoints: batchen kör fritt
+
+        await run.Runner.SignalAsync("stepOver");
+
+        var (line, reason) = await run.ExpectPausedAsync();
+        // Sidecaren rapporterar "step"; etiketten "pause" sätter adaptern själv
+        // när det var Pause-knappen som skickade signalen.
+        Assert.Equal("step", reason);
+        // Den stannade någonstans mitt i, inte på sista raden.
+        Assert.InRange(line, 2, 5);
+
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+        Assert.Contains(run.Outputs, o => o.Contains("2"));
+    }
+
     /// <summary>debugDatabase finns för miljöer där man inte får skapa objekt i
     /// måldatabasen. Då måste hela mekaniken fungera med __dbg någon
     /// annanstans - och måldatabasen får inte röras.</summary>
