@@ -15,6 +15,8 @@ jobs:
   # runtime-beteendet (Pause/abort/exception-stopp/modulläge) automatiskt.
   test:
     runs-on: ubuntu-latest
+    # A hung test must fail in bounded time, not sit on a runner for hours.
+    timeout-minutes: 20
     services:
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest

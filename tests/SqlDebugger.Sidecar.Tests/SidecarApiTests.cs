@@ -137,6 +137,8 @@ public class SidecarApiTests(SqlServerFixture fixture)
         await WaitAsync(terminated.Task, pump, "terminated", sidecar);
         await pump.WaitAsync(TimeSpan.FromSeconds(10));
 
+        cts.Cancel();
+
         lock (events)
         {
             // PRINT når Debug Console som ett output-event...
