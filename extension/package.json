@@ -259,6 +259,7 @@
   },
   "scripts": {
     "compile": "tsc -p .",
+    "test": "npm run compile && node --test \"test/*.test.js\"",
     "watch": "tsc -w -p .",
     "bundle-sidecar": "node scripts/bundle-sidecar.js",
     "package": "npm run compile && npm run bundle-sidecar && npx -y @vscode/vsce package",

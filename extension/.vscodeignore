@@ -3,3 +3,4 @@ tsconfig.json
 **/*.map
 .vscode-test/**
 *.vsix
+test/**

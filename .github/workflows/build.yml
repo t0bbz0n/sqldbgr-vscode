@@ -116,11 +116,11 @@ jobs:
         working-directory: sidecar-npm
         run: npm pack
 
-      - name: Build extension
+      - name: Build and unit-test extension
         working-directory: extension
         run: |
           npm ci
-          npm run compile
+          npm test
 
       # Sidecaren buntas in i VSIX:en; extensionen hämtar .NET-runtimen
       # själv via ms-dotnettools.vscode-dotnet-runtime vid första körningen
