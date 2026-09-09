@@ -99,7 +99,9 @@ app.MapPost("/session/start", async (StartSessionRequest req) =>
         return Results.BadRequest(new { message = "Parse errors", errors = instrumented.Errors });
 
     var options = new DebugSessionOptions(req.Mode, req.Transaction ?? "none", debugDatabase);
-    var runner = new DebugSessionRunner(req.ConnectionString, instrumented, options, req.Params);
+    // Params och Breakpoints är valfria i JSON:en; utan ?? [] blir de null och
+    // körningen dör på en naken NullReferenceException långt därifrån.
+    var runner = new DebugSessionRunner(req.ConnectionString, instrumented, options, req.Params ?? []);
     sessions[runner.SessionId] = runner;
 
     return Results.Ok(new
@@ -120,7 +122,7 @@ app.MapPost("/session/{id:guid}/run", (Guid id, RunRequest req) =>
 app.MapPost("/session/{id:guid}/breakpoints", async (Guid id, BreakpointsRequest req) =>
 {
     if (!sessions.TryGetValue(id, out var runner)) return Results.NotFound();
-    await runner.SetBreakpointsAsync(req.Breakpoints);
+    await runner.SetBreakpointsAsync(req.Breakpoints ?? []);
     return Results.Ok();
 });
 
@@ -222,13 +224,13 @@ public record StartSessionRequest(
     string ProgramPath,
     string ConnectionString,
     string Mode,
-    Dictionary<string, object?> Params,
+    Dictionary<string, object?>? Params = null,
     string? Transaction = null,
     string? DebugDatabase = null);
 
 public record InspectRequest(string ProgramPath);
 public record RunRequest(bool StopOnEntry);
-public record BreakpointsRequest(BreakpointSpec[] Breakpoints);
+public record BreakpointsRequest(BreakpointSpec[]? Breakpoints);
 public record SignalRequest(string Command);
 public record SetVariableRequest(string Name, string? Value);
 public record EvaluateRequest(string Expression);

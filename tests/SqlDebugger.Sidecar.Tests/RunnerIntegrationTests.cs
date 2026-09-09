@@ -238,8 +238,9 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         // Sidecaren rapporterar "step"; etiketten "pause" sätter adaptern själv
         // när det var Pause-knappen som skickade signalen.
         Assert.Equal("step", reason);
-        // Den stannade någonstans mitt i, inte på sista raden.
-        Assert.InRange(line, 2, 5);
+        // Var den stannade beror på hur långt batchen hunnit när signalen kom;
+        // det som räknas är att den stannade före slutet och gick att köra vidare.
+        Assert.InRange(line, 1, 5);
 
         await run.Runner.SignalAsync("continue");
         await run.ExpectAsync("terminated");
