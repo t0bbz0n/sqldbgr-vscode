@@ -223,6 +223,11 @@
     ],
     "commands": [
       {
+        "command": "sqldbgr.attachToRunningModule",
+        "title": "Attach to a running procedure\u2026",
+        "category": "sqldbgr"
+      },
+      {
         "command": "sqldbgr.debugCurrentFile",
         "title": "%command.debugCurrentFile%",
         "category": "sqldbgr",

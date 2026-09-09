@@ -192,11 +192,23 @@ async function inspectAndPrepare(
               ? t('CREATE/GRANT run; no pauses inside the module body')
               : module.reason ?? undefined,
             value: 'script' as const
-          }
+          },
+          ...(module.canScriptify ? [{
+            label: `$(check) ${t('Always debug the body')}`,
+            description: t('stop asking; change it under sqldbgr.moduleFiles'),
+            value: 'always' as const
+          }] : [])
         ],
         { title: t('{0}: how do you want to run?', module.name), ignoreFocusOut: true });
       if (!choice) return false;
-      if (choice.value !== 'module') return true;
+      if (choice.value === 'always') {
+        // Global rather than per-file: the question is about a habit, and a
+        // per-file memory would go stale as soon as the file is renamed.
+        await vscode.workspace.getConfiguration('sqldbgr')
+          .update('moduleFiles', 'debug', vscode.ConfigurationTarget.Global);
+      } else if (choice.value !== 'module') {
+        return true;
+      }
       config.mode = 'module';
     }
   }
@@ -286,6 +298,20 @@ function registerCommands(context: vscode.ExtensionContext): void {
       { type: 'tsql', request: 'launch', name: 'Debug T-SQL', program, ...extra });
 
   context.subscriptions.push(
+    // Attach needed a hand-written launch.json with mode: "attach" and a
+    // connection string. Everything it needs is resolvable from here, so the
+    // command asks for nothing the launch path would not have asked for.
+    vscode.commands.registerCommand('sqldbgr.attachToRunningModule', async () => {
+      const connectionString = await resolveConnectionString(context);
+      if (!connectionString) return;
+      await vscode.debug.startDebugging(undefined, {
+        type: 'tsql',
+        request: 'attach',
+        name: t('Attach to a running module'),
+        mode: 'attach',
+        connectionString
+      });
+    }),
     vscode.commands.registerCommand('sqldbgr.debugCurrentFile', () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.document.isUntitled) {
