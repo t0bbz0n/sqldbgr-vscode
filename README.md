@@ -121,87 +121,47 @@ code --install-extension sqldbgr-0.1.0.vsix
 
 ### Publicera till Marketplace
 
-Ingen Personal Access Token behövs, och det är med flit: Azure DevOps
-pensionerar globala PAT:ar **1 december 2026**, och Microsoft styr om till
-Microsoft Entra ID. Vi använder därför en *federerad* inloggning - GitHub
-lämnar en kortlivad OIDC-token som Azure litar på, så ingenting långlivat
-lagras i repot.
-
-#### Första publiceringen, från din egen maskin
-
-Enklast, och kräver ingenting i Azure alls - du loggar in som dig själv:
-
 ```bash
-az login --allow-no-subscriptions        # samma Microsoft-konto som äger publishern
+az login --allow-no-subscriptions    # en gång, med kontot som äger publishern
 cd extension
-npm run package
-npx @vscode/vsce publish --azure-credential --packagePath sqldbgr-0.2.0.vsix
+npm run release                      # 0.1.0 -> 0.1.1, bygger, publicerar, taggar
 ```
 
-`--allow-no-subscriptions` behövs eftersom kontot inte äger någon Azure-
-prenumeration; inloggningen ska bara ge en identitet, inga resurser.
+`npm run release -- minor`, `-- major` eller `-- 1.0.0` för andra hopp,
+`--no-push` om du vill titta på commiten först.
 
-Innan det fungerar måste publishern finnas på
-<https://marketplace.visualstudio.com/manage>, med id:t exakt
-`tobias-trunehag` - samma som `publisher` i `extension/package.json`.
+Scriptet vägrar köra på ett smutsigt träd, kontrollerar inloggningen *innan*
+det höjer versionen, och rullar tillbaka höjningen om publiceringen fallerar -
+Marketplace tar aldrig emot samma version två gånger, så en kvarlämnad höjning
+efter ett misslyckande får nästa försök att se ut som en dubblett av något som
+aldrig publicerades.
 
-#### Publicera från CI
+Ingen Personal Access Token är inblandad, och det är med flit: Azure DevOps
+pensionerar globala PAT:ar **1 december 2026**. `--azure-credential` använder
+Microsoft Entra ID - samma mekanism Microsoft flyttar allt till - fast med
+*dig* som identitet i stället för en service principal. Därför krävs ingen
+app-registrering, ingen federerad credential och ingen Azure DevOps-användare.
 
-CI publicerar på `v*`-taggar när en app-registrering finns. Tre steg, alla i
-<https://portal.azure.com> under **Microsoft Entra ID → App registrations**:
+#### Varför inte publicera från CI
 
-1. **New registration** - valfritt namn (t.ex. `sqldbgr-publisher`), single
-   tenant. Anteckna *Application (client) ID* och *Directory (tenant) ID*.
-2. **Certificates & secrets → Federated credentials → Add credential**,
-   scenariot *GitHub Actions deploying Azure resources*:
-   - Organization `t0bbz0n` (id `706990`), Repository `sqldbgr-vscode`
-     (id `1333055433`)
-   - Entity type **Environment**, namn `release`
-   - Ingen client secret skapas - hela poängen är att det inte finns någon.
+Det går, men kostnaden är hög just nu. En service principal måste läggas till
+som användare i Azure DevOps-organisationen bakom publishern och därefter som
+medlem av publishern, och för en publisher som ägs av ett personligt
+Microsoft-konto verkar det inte gå alls - se
+[vsce#1023](https://github.com/microsoft/vscode-vsce/issues/1023), rapporterat
+och stängt utan svar.
 
-   Fyll i id-fälten. Det här repot skickar GitHubs *immutable* subject, där
-   id:na ingår, och en credential utan dem matchar då aldrig. Mätt, inte gissat
-   - kör workflowet **Show the OIDC subject** (Actions → Run workflow) så
-   skriver det ut exakt vad GitHub skickar. Rätt värde här är:
+Workflowet har jobbet kvar och det hoppar över publiceringen när
+`AZURE_CLIENT_ID` saknas, så en tagg bygger VSIX:en och skapar
+GitHub-releasen ändå. Sätter du hemligheterna någon gång tar CI över
+publiceringen; gör du inte det krockar ingenting.
 
-   ```
-   repo:t0bbz0n@706990/sqldbgr-vscode@1333055433:environment:release
-   ```
-
-   Id:na är oföränderliga, vilket är poängen: byter du namn på repot eller
-   kontot fortsätter credentialen fungera, medan den som tar över det lediga
-   namnet inte kan låtsas vara du.
-
-   Just **Environment**, inte Tag: Azure matchar credentialens *subject* exakt
-   och har inga jokertecken, så en Tag-credential skulle behöva skapas om för
-   varje release. Publiceringsjobbet kör därför i GitHub-environmentet
-   `release`, vilket ger ett stabilt subject som alla `v*`-taggar matchar.
-   Environmentet skapar sig självt vid första körningen; vill du ha en manuell
-   grind före publicering lägger du en *required reviewer* på det under
-   Settings → Environments.
-3. **Lägg till appen som medlem av publishern** på
-   <https://marketplace.visualstudio.com/manage> → publishern → *Members* →
-   lägg till app-registreringens namn. Utan det steget lyckas inloggningen men
-   `publish` nekas.
-
-Lägg sedan `AZURE_CLIENT_ID` och `AZURE_TENANT_ID` som repo-hemligheter
-(Settings → Secrets and variables → Actions) och tagga:
-
-```bash
-git tag v0.2.0 && git push origin v0.2.0
-```
-
-Saknas `AZURE_CLIENT_ID` byggs och releasas taggen ändå - publiceringssteget
-säger bara ifrån, i stället för att fälla releasen.
-
-#### På väg: trusted publishing
-
-`vsce publish --oidc` tar bort även app-registreringen: GitHub-repot och
-workflowet registreras direkt som betrodd utgivare på Marketplace, precis som
-npm:s och PyPI:s trusted publishing. Det är dokumenterat i vsce:s README men
-finns ännu inte i någon släppt version (kontrollerat mot 3.9.2 och
-prereleaserna 3.9.3-*). När det släpps blir CI-steget en rad utan hemligheter
-alls.
+Det som faktiskt löser CI-fallet är `vsce publish --oidc` - *trusted
+publishing*, där repot och workflowet registreras direkt som betrodd utgivare
+på Marketplace, precis som hos npm och PyPI. Ingen app-registrering, ingen
+Azure DevOps, inga hemligheter. Det är dokumenterat i vsce:s README men finns
+ännu inte i någon släppt version (kontrollerat mot 3.9.2 och prereleaserna
+3.9.3-*). När det släpps blir CI-steget en rad och det här avsnittet kortare.
 
 #### Att veta
 

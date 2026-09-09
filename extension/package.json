@@ -261,7 +261,8 @@
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
     "bundle-sidecar": "node scripts/bundle-sidecar.js",
-    "package": "npm run compile && npm run bundle-sidecar && vsce package"
+    "package": "npm run compile && npm run bundle-sidecar && npx -y @vscode/vsce package",
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.65.0",
