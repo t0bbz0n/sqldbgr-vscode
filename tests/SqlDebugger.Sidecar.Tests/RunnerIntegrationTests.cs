@@ -160,6 +160,103 @@ public class RunnerIntegrationTests(SqlServerFixture fixture)
         Assert.Contains(run.Outputs, o => o.Contains("return value = 7") && o.Contains("@result = 15"));
     }
 
+    /// <summary>Två VS Code-fönster mot samma databas är helt normalt, och
+    /// __dbg-tabellerna delas. Sessionerna måste hållas isär på SessionId.</summary>
+    [SkippableFact]
+    public async Task TwoConcurrentSessions_DoNotSeeEachOthersState()
+    {
+        RequireSqlServer();
+        var first = await DebugRun.StartAsync(Cs, "DECLARE @a INT = 111;\nSET @a = @a + 1;\nSELECT @a AS A;", [2]);
+        var second = await DebugRun.StartAsync(Cs, "DECLARE @b INT = 222;\nSET @b = @b + 1;\nSELECT @b AS B;", [2]);
+
+        await first.ExpectPausedAsync();
+        await second.ExpectPausedAsync();
+
+        // Var och en ser bara sina egna variabler.
+        var firstLocals = await first.LocalsAsync();
+        var secondLocals = await second.LocalsAsync();
+        Assert.Equal("111", firstLocals["@a"]);
+        Assert.DoesNotContain("@b", firstLocals.Keys);
+        Assert.Equal("222", secondLocals["@b"]);
+        Assert.DoesNotContain("@a", secondLocals.Keys);
+
+        // Att fortsätta den ena får inte röra den andra.
+        await first.Runner.SignalAsync("continue");
+        await first.ExpectAsync("terminated");
+        Assert.Equal("222", (await second.LocalsAsync())["@b"]);
+
+        await second.Runner.SignalAsync("continue");
+        await second.ExpectAsync("terminated");
+
+        Assert.Contains(first.Outputs, o => o.Contains("112"));
+        Assert.Contains(second.Outputs, o => o.Contains("223"));
+    }
+
+    /// <summary>transaction: commit är motsatsen till rollback-läget och den
+    /// enda inställningen som med flit lämnar kvar ändringar.</summary>
+    [SkippableFact]
+    public async Task TransactionCommit_KeepsChanges()
+    {
+        RequireSqlServer();
+        await using (var conn = new SqlConnection(Cs))
+            await conn.ExecuteAsync("""
+                IF OBJECT_ID('dbo.CommitProbe') IS NULL CREATE TABLE dbo.CommitProbe (Value INT);
+                DELETE FROM dbo.CommitProbe;
+                """);
+
+        var run = await DebugRun.StartAsync(
+            Cs, "INSERT INTO dbo.CommitProbe (Value) VALUES (7);\nSELECT 1 AS Done;", [],
+            transaction: "commit");
+        await run.ExpectAsync("terminated");
+
+        await using var check = new SqlConnection(Cs);
+        Assert.Equal(7, await check.ExecuteScalarAsync<int>("SELECT TOP 1 Value FROM dbo.CommitProbe"));
+    }
+
+    /// <summary>debugDatabase finns för miljöer där man inte får skapa objekt i
+    /// måldatabasen. Då måste hela mekaniken fungera med __dbg någon
+    /// annanstans - och måldatabasen får inte röras.</summary>
+    [SkippableFact]
+    public async Task DebugDatabase_KeepsTheSchemaOutOfTheTargetDatabase()
+    {
+        RequireSqlServer();
+        const string other = "sqldbgr_test_dbg";
+        await using (var master = new SqlConnection(
+            new SqlConnectionStringBuilder(Cs) { InitialCatalog = "master" }.ConnectionString))
+        {
+            await master.ExecuteAsync($"IF DB_ID('{other}') IS NULL CREATE DATABASE {other}");
+        }
+        // Måldatabasen ska inte ha något __dbg efteråt; städa bort spår från
+        // tidigare tester så assertionen betyder något.
+        await using (var target = new SqlConnection(Cs))
+            await target.ExecuteAsync("""
+                IF SCHEMA_ID('__dbg') IS NOT NULL
+                BEGIN
+                    IF OBJECT_ID('__dbg.Pause') IS NOT NULL DROP PROCEDURE __dbg.Pause;
+                    IF OBJECT_ID('__dbg.ShouldPause') IS NOT NULL DROP FUNCTION __dbg.ShouldPause;
+                    IF OBJECT_ID('__dbg.Locals') IS NOT NULL DROP TABLE __dbg.Locals;
+                    IF OBJECT_ID('__dbg.Overrides') IS NOT NULL DROP TABLE __dbg.Overrides;
+                    IF OBJECT_ID('__dbg.PauseState') IS NOT NULL DROP TABLE __dbg.PauseState;
+                    IF OBJECT_ID('__dbg.Control') IS NOT NULL DROP TABLE __dbg.Control;
+                    DROP SCHEMA __dbg;
+                END
+                """);
+
+        var run = await DebugRun.StartAsync(
+            Cs, "DECLARE @x INT = 5;\nSET @x = @x * 2;\nSELECT @x AS X;", [2],
+            debugDatabase: other);
+
+        await run.ExpectPausedAsync();
+        Assert.Equal("5", (await run.LocalsAsync())["@x"]);
+        await run.Runner.SignalAsync("continue");
+        await run.ExpectAsync("terminated");
+        Assert.Contains(run.Outputs, o => o.Contains("10"));
+
+        await using var check = new SqlConnection(Cs);
+        Assert.Equal(0, await check.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM sys.schemas WHERE name = '__dbg'"));
+    }
+
     /// <summary>Aliastyper (CREATE TYPE ... FROM) är vanliga i äldre scheman.
     /// De går att DECLARE:a men CONVERT tar bara systemtyper, så en genererad
     /// TRY_CONVERT(min_typ, ...) fällde hela batchen redan vid kompileringen.</summary>

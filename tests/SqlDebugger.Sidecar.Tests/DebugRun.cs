@@ -30,17 +30,21 @@ public sealed class DebugRun
         bool stopOnEntry = false, string mode = "invoke",
         Dictionary<string, object?>? parameters = null,
         string transaction = "none",
-        IReadOnlyList<Bp>? breakpoints = null)
+        IReadOnlyList<Bp>? breakpoints = null,
+        string? debugDatabase = null)
     {
         var database = new SqlConnectionStringBuilder(connectionString).InitialCatalog;
-        var debugSchema = $"[{database}].__dbg";
+        // __dbg kan ligga i en annan databas för miljöer utan DDL-rätt i
+        // måldatabasen; sidecaren kvalificerar alla anrop med den.
+        var schemaDatabase = debugDatabase ?? database;
+        var debugSchema = $"[{schemaDatabase}].__dbg";
         var analyzer = new ScriptDomAnalyzer();
         var script = mode == "module"
             ? analyzer.InstrumentModuleBody(sql, "/test.sql", debugSchema)
             : analyzer.Instrument(sql, "/test.sql", debugSchema);
         Assert.True(script.Errors.Count == 0, string.Join("; ", script.Errors));
 
-        var options = new DebugSessionOptions(mode, transaction, database);
+        var options = new DebugSessionOptions(mode, transaction, schemaDatabase);
         var runner = new DebugSessionRunner(connectionString, script, options, parameters ?? []);
         var specs = breakpoints is not null
             ? breakpoints.Select(b => new BreakpointSpec(script.LineMap[b.Line], b.Condition, b.HitCondition, b.LogMessage))
