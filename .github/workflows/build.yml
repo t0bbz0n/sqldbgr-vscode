@@ -11,33 +11,40 @@ permissions:
 
 jobs:
   # Enhetstester (analysatorn) + integrationstester av pausmekaniken mot en
-  # riktig SQL Server i en service-container. Det enda som verifierar
-  # runtime-beteendet (Pause/abort/exception-stopp/modulläge) automatiskt.
+  # riktig SQL Server. Det enda som verifierar runtime-beteendet
+  # (Pause/abort/exception-stopp/modulläge) automatiskt.
   test:
     runs-on: ubuntu-latest
     # A hung test must fail in bounded time, not sit on a runner for hours.
     timeout-minutes: 20
-    services:
-      mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
-        env:
-          ACCEPT_EULA: Y
-          MSSQL_SA_PASSWORD: Sqldbgr!Test123
-          MSSQL_PID: Developer
-        ports:
-          - 1433:1433
-        options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Sqldbgr!Test123' -C -Q 'SELECT 1' || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 15
-          --health-start-period 30s
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      # Started here rather than as a `services:` container on purpose. The
+      # runner tears service containers down after the last step and dumps
+      # SQL Server's entire startup log while doing it - several hundred lines
+      # of "running the upgrade step" - which pushes the actual test failure
+      # off the end of the job log, where it is the one thing anyone reads.
+      - name: Start SQL Server
+        run: |
+          docker run -d --name mssql \
+            -e ACCEPT_EULA=Y -e 'MSSQL_SA_PASSWORD=Sqldbgr!Test123' -e MSSQL_PID=Developer \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          for i in $(seq 1 60); do
+            if docker exec mssql /opt/mssql-tools18/bin/sqlcmd \
+                 -S localhost -U sa -P 'Sqldbgr!Test123' -C -Q 'SELECT 1' >/dev/null 2>&1; then
+              echo "SQL Server accepted a connection after ${i}0s"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::SQL Server never became reachable"
+          docker logs --tail 50 mssql
+          exit 1
 
       - name: Run tests
         env:
@@ -53,15 +60,9 @@ jobs:
           --blame-hang --blame-hang-timeout 4m
 
       # The integration tests skip themselves when SQLDBGR_TEST_CONNECTION is
-      # missing, and a skipped test is green - so losing the service container
-      # or the env var would turn the half of the suite that touches a real
-      # server into a silent no-op that still passes.
-      # Stopping the service container dumps SQL Server's whole startup log,
-      # so a failure ends up hundreds of lines above the end of the job log.
-      - name: Report failed tests
-        if: failure()
-        run: python3 scripts/report-failed-tests.py "artifacts/*.trx"
-
+      # missing, and a skipped test is green - so losing the server or the env
+      # var would turn the half of the suite that touches a real one into a
+      # silent no-op that still passes.
       - name: Require every test to have run
         run: |
           trx=$(ls artifacts/*.trx | head -1)
@@ -77,6 +78,11 @@ jobs:
             echo "::error::${skipped} test(s) were skipped - the integration tests must run"
             exit 1
           fi
+
+      # Last, so the failure is the last thing in the job log.
+      - name: Report failed tests
+        if: failure()
+        run: python3 scripts/report-failed-tests.py "artifacts/*.trx"
 
   build:
     runs-on: ubuntu-latest
