@@ -24,27 +24,17 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # Started here rather than as a `services:` container on purpose. The
-      # runner tears service containers down after the last step and dumps
-      # SQL Server's entire startup log while doing it - several hundred lines
-      # of "running the upgrade step" - which pushes the actual test failure
-      # off the end of the job log, where it is the one thing anyone reads.
+      # Started here rather than as a `services:` container on purpose: the
+      # runner tears a service container down after the last step and dumps
+      # SQL Server's entire startup log while doing it, which pushes the actual
+      # test failure off the end of the job log. Nothing waits for the server
+      # here - the test fixture already retries its first connection for two
+      # minutes, which is what a service container's health check bought us.
       - name: Start SQL Server
         run: |
           docker run -d --name mssql \
             -e ACCEPT_EULA=Y -e 'MSSQL_SA_PASSWORD=Sqldbgr!Test123' -e MSSQL_PID=Developer \
             -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
-          for i in $(seq 1 60); do
-            if docker exec mssql /opt/mssql-tools18/bin/sqlcmd \
-                 -S localhost -U sa -P 'Sqldbgr!Test123' -C -Q 'SELECT 1' >/dev/null 2>&1; then
-              echo "SQL Server accepted a connection after ${i}0s"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::SQL Server never became reachable"
-          docker logs --tail 50 mssql
-          exit 1
 
       - name: Run tests
         env:
