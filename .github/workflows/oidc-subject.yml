@@ -20,8 +20,12 @@ jobs:
   subject:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write
     steps:
+      # The publisher name is read from the manifest, so it cannot drift.
+      - uses: actions/checkout@v4
+
       - name: Show the claims, then try the exchange
         uses: actions/github-script@v7
         with:
