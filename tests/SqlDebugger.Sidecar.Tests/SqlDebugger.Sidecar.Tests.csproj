@@ -23,4 +23,13 @@
     <Content Include="..\..\sidecar\Db\DebugSchema.sql" Link="Db\DebugSchema.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Bara för att sidecaren ska BYGGAS med testerna. Ingen referens till
+         dess assembly: SidecarProcess startar den som en egen process, och
+         `dotnet run` inifrån `dotnet test` låser sig mot det pågående bygget. -->
+    <ProjectReference Include="../../sidecar/SqlDebugger.Sidecar.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
+  </ItemGroup>
+
 </Project>

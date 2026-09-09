@@ -46,7 +46,7 @@ public sealed class SidecarProcess : IAsyncDisposable
             UseShellExecute = false,
             WorkingDirectory = RepositoryRoot()
         };
-        foreach (var arg in new[] { "run", "--project", "sidecar", "--", "--port", "0" })
+        foreach (var arg in new[] { SidecarDll(), "--port", "0" })
             start.ArgumentList.Add(arg);
         start.Environment["SQLDBGR_TOKEN"] = token;
         // Annars blir ett ohanterat undantag en 500 med tom body, och testet
@@ -69,8 +69,8 @@ public sealed class SidecarProcess : IAsyncDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        // `dotnet run` bygger först, så det här måste rymma ett kallt bygge.
-        var timeout = Task.Delay(TimeSpan.FromMinutes(3));
+        // Ingen byggtid här - DLL:en är redan byggd - så väntan får vara kort.
+        var timeout = Task.Delay(TimeSpan.FromSeconds(60));
         if (await Task.WhenAny(url.Task, timeout) == timeout)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* redan borta */ }
@@ -156,6 +156,19 @@ public sealed class SidecarProcess : IAsyncDisposable
         lock (_output) tail = string.Join("\n", _output.TakeLast(40));
         throw new InvalidOperationException(
             $"{what} -> {(int)response.StatusCode} {response.ReasonPhrase}: {body}\n\n--- sidecar-logg ---\n{tail}");
+    }
+
+    /// <summary>Den färdigbyggda sidecaren. Testprojektet refererar
+    /// sidecar-projektet enbart för att få den byggd.</summary>
+    private static string SidecarDll()
+    {
+        var root = RepositoryRoot();
+        var matches = Directory.GetFiles(
+            Path.Combine(root, "sidecar", "bin"), "SqlDebugger.Sidecar.dll", SearchOption.AllDirectories);
+        if (matches.Length == 0)
+            throw new InvalidOperationException(
+                $"hittade ingen byggd sidecar under {Path.Combine(root, "sidecar", "bin")}");
+        return matches.OrderByDescending(File.GetLastWriteTimeUtc).First();
     }
 
     private static string RepositoryRoot()
