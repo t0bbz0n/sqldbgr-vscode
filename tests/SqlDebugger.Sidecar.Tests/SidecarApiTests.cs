@@ -47,6 +47,12 @@ public class SidecarApiTests(SqlServerFixture fixture)
         await awaited;
     }
 
+    /// <summary>Skriver ut var testet är. En hängning här har hittills bara
+    /// visat sig som tystnad i jobbloggen; med markörer syns det sista steget
+    /// som faktiskt blev klart.</summary>
+    private static void Step(string what) =>
+        Console.WriteLine($"[api-test {DateTime.UtcNow:HH:mm:ss}] {what}");
+
     private static async Task<string> WriteScriptAsync(string sql)
     {
         var path = Path.Combine(Path.GetTempPath(), $"sqldbgr-api-{Guid.NewGuid():N}.sql");
@@ -59,7 +65,9 @@ public class SidecarApiTests(SqlServerFixture fixture)
     {
         RequireSqlServer();
         var program = await WriteScriptAsync(Script);
+        Step("startar sidecar");
         await using var sidecar = await SidecarProcess.StartAsync();
+        Step("sidecar uppe: " + sidecar.Url);
 
         // sidecarManager.ts probar /health innan allt annat, och det är den enda
         // rutt som måste svara utan token.
@@ -70,11 +78,14 @@ public class SidecarApiTests(SqlServerFixture fixture)
         Assert.Equal(System.Net.HttpStatusCode.Unauthorized,
             await sidecar.GetUnauthenticatedAsync("/session/" + Guid.NewGuid()));
 
+        Step("health ok");
+
         // /inspect driver CodeLens och erbjudandet om modulläge.
         var inspected = await sidecar.PostAsync<InspectResponse>("/inspect", new { programPath = program });
         Assert.Empty(inspected.ParseErrors);
         Assert.Null(inspected.Module);   // ett vanligt skript, ingen modul
 
+        Step("inspect ok");
         var started = await sidecar.PostAsync<StartResponse>("/session/start", new
         {
             connectionString = Cs,
@@ -82,6 +93,7 @@ public class SidecarApiTests(SqlServerFixture fixture)
             mode = "invoke"
         });
         var session = started.SessionId;
+        Step("session " + session);
 
         // Breakpoints skickas som stmtId, inte radnummer: sidecaren returnerar
         // spans från parsen och extensionen snappar raden till ett statement
@@ -102,6 +114,7 @@ public class SidecarApiTests(SqlServerFixture fixture)
             }
         });
 
+        Step("breakpoint satt");
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var events = new List<(string Name, string Data)>();
         var pausedOnce = new TaskCompletionSource();
@@ -116,7 +129,9 @@ public class SidecarApiTests(SqlServerFixture fixture)
             }
         }, cts.Token);
 
+        Step("kör");
         await sidecar.PostAsync($"/session/{session}/run", new { stopOnEntry = false });
+        Step("run skickat");
 
         await WaitAsync(pausedOnce.Task, pump, "en paus", sidecar);
 
@@ -137,6 +152,7 @@ public class SidecarApiTests(SqlServerFixture fixture)
         await WaitAsync(terminated.Task, pump, "terminated", sidecar);
         await pump.WaitAsync(TimeSpan.FromSeconds(10));
 
+        Step("terminated");
         cts.Cancel();
 
         lock (events)
