@@ -35,16 +35,33 @@ public class SidecarApiTests(SqlServerFixture fixture)
 
     /// <summary>Väntar på ett event, men låter pumpens undantag vinna. Faller
     /// pumpen tyst blir symptomet annars bara "timed out", vilket inte säger
-    /// något om varför.</summary>
-    private static async Task WaitAsync(Task awaited, Task pump, string what, SidecarProcess sidecar)
+    /// något om varför.
+    ///
+    /// Tar pumpen slut utan att händelsen kommit är väntan förlorad: den TCS:en
+    /// blir aldrig satt. Att bara `await awaited` här hänger för alltid, och
+    /// det var precis vad som stallade testkörningen - hela jobbet dog på
+    /// blame-hang utan att någon rad pekade ut orsaken.</summary>
+    private static async Task WaitAsync(
+        Task awaited, Task pump, string what, SidecarProcess sidecar,
+        List<(string Name, string Data)> events)
     {
         var timeout = Task.Delay(TimeSpan.FromSeconds(60));
         var finished = await Task.WhenAny(awaited, pump, timeout);
         if (finished == pump && pump.IsFaulted) await pump;      // kastar den riktiga orsaken
-        if (finished == timeout)
-            throw new Xunit.Sdk.XunitException(
-                $"väntade på {what} i 60s utan resultat.\n\n--- sidecar-logg ---\n{sidecar.RecentOutput()}");
+        if (finished == timeout) throw Failed($"väntade på {what} i 60s utan resultat");
+        if (!awaited.IsCompleted)
+            throw Failed($"händelseströmmen tog slut innan {what} kom");
         await awaited;
+
+        Xunit.Sdk.XunitException Failed(string why)
+        {
+            string seen;
+            lock (events) seen = events.Count == 0
+                ? "(inga händelser alls)"
+                : string.Join("\n", events.Select(e => $"{e.Name}: {e.Data}"));
+            return new Xunit.Sdk.XunitException(
+                $"{why}.\n\n--- händelser ---\n{seen}\n\n--- sidecar-logg ---\n{sidecar.RecentOutput()}");
+        }
     }
 
     /// <summary>Skriver ut var testet är. En hängning här har hittills bara
@@ -133,7 +150,8 @@ public class SidecarApiTests(SqlServerFixture fixture)
         await sidecar.PostAsync($"/session/{session}/run", new { stopOnEntry = false });
         Step("run skickat");
 
-        await WaitAsync(pausedOnce.Task, pump, "en paus", sidecar);
+        await WaitAsync(pausedOnce.Task, pump, "en paus", sidecar, events);
+        Step("pausad");
 
         // Paus före satsen: @x är fortfarande 1 på rad 2.
         var locals = (await sidecar.GetAsync<Local[]>($"/session/{session}/locals"))
@@ -149,7 +167,8 @@ public class SidecarApiTests(SqlServerFixture fixture)
         await sidecar.PostAsync($"/session/{session}/variables", new { name = "@x", value = "41" });
         await sidecar.PostAsync($"/session/{session}/signal", new { command = "continue" });
 
-        await WaitAsync(terminated.Task, pump, "terminated", sidecar);
+        Step("continue skickat");
+        await WaitAsync(terminated.Task, pump, "terminated", sidecar, events);
         await pump.WaitAsync(TimeSpan.FromSeconds(10));
 
         Step("terminated");

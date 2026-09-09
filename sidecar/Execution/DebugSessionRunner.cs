@@ -49,6 +49,7 @@ public class DebugSessionRunner
     private Dictionary<int, BreakpointSpec> _breakpoints = [];
     private readonly Dictionary<int, int> _hitCounts = [];
     private bool _started;
+    private Task? _run;
     private volatile bool _faulted;
     private int _currentBatch = -1;
     private int? _lastPausedStmt;
@@ -71,7 +72,7 @@ public class DebugSessionRunner
     {
         if (_started) return false;
         _started = true;
-        _ = RunAsync(stopOnEntry);
+        _run = RunAsync(stopOnEntry);
         return true;
     }
 
@@ -304,10 +305,22 @@ public class DebugSessionRunner
     public async Task SignalAsync(string command)
     {
         if (_faulted) { _resumeAfterFault.TrySetResult(); return; }
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.ExecuteAsync(
-            $"UPDATE {_dbg}.Control SET Command = @cmd, SignalSeq = SignalSeq + 1 WHERE SessionId = @sid",
-            new { cmd = command, sid = SessionId });
+        // Kontrollraden skrivs in av RunAsync, som körs på en egen task, så en
+        // signal som kommer strax efter start kan hinna före den. En UPDATE som
+        // inte träffar någon rad är helt tyst: Pause-knappen ser ut att fungera
+        // och gör ingenting. Vänta in raden så länge körningen lever.
+        while (true)
+        {
+            await using var conn = new SqlConnection(_connectionString);
+            var affected = await conn.ExecuteAsync(
+                $"UPDATE {_dbg}.Control SET Command = @cmd, SignalSeq = SignalSeq + 1 WHERE SessionId = @sid",
+                new { cmd = command, sid = SessionId });
+            if (affected > 0) return;
+            // Ingen rad och ingen körning kvar att signalera till: sessionen är
+            // slut och raden städad. Då är det inget att vänta på.
+            if (_run is null or { IsCompleted: true } || _cts.IsCancellationRequested) return;
+            await Task.Delay(25);
+        }
     }
 
     /// <summary>Avbryter direkt: 'abort' får __dbg.Pause att THROW vid pauspunkten,
