@@ -6,8 +6,12 @@
 # differs by one character never matches, and the only symptom is a failed
 # token exchange at release time, long after the mistake was made.
 #
-# Run from Actions -> "Show the OIDC subject" -> Run workflow.
-name: Show the OIDC subject
+# It also performs the exact exchange `vsce publish --oidc` performs - POST
+# the token to the Marketplace's /_apis/gallery/token with the publisher name -
+# and reports only the HTTP status. That answers "is trusted publishing
+# configured for this publisher yet" without publishing anything and without
+# spending a version number, which the Marketplace never accepts twice.
+name: Check trusted publishing
 
 on:
   workflow_dispatch:
@@ -18,19 +22,47 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - name: Print the claims Azure matches on
+      - name: Show the claims, then try the exchange
         uses: actions/github-script@v7
         with:
           script: |
+            const publisher = require('./extension/package.json').publisher;
             const token = await core.getIDToken('marketplace.visualstudio.com');
+
             // Only the claims that matter are printed - never the token, which
             // is a credential in its own right.
             const claims = JSON.parse(
               Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
-            for (const key of ['sub', 'repository', 'repository_id',
-                               'repository_owner', 'repository_owner_id',
-                               'workflow_ref', 'job_workflow_ref',
-                               'environment', 'iss', 'aud']) {
-              core.info(`${key.padEnd(22)} ${claims[key] ?? '(absent)'}`);
+            for (const key of ['sub', 'repository', 'repository_owner',
+                               'workflow_ref', 'job_workflow_ref', 'aud']) {
+              core.info(`${key.padEnd(18)} ${claims[key] ?? '(absent)'}`);
             }
-            core.notice(`Subject: ${claims.sub}`);
+
+            core.info(`\nExchanging for a Marketplace credential as "${publisher}"...`);
+            const response = await fetch(
+              'https://marketplace.visualstudio.com/_apis/gallery/token', {
+                method: 'POST',
+                headers: {
+                  Accept: 'application/json',
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'vsce'
+                },
+                body: JSON.stringify({ publisherName: publisher })
+              });
+
+            const body = await response.text();
+            if (response.ok) {
+              // The body holds the credential. Say that it worked, nothing more.
+              core.notice(
+                `Trusted publishing works: the Marketplace issued a credential ` +
+                `for "${publisher}". Tagging v* will publish.`);
+              return;
+            }
+            core.warning(
+              `Exchange refused: HTTP ${response.status} ${response.statusText}`);
+            // An error body carries no credential, and names what is missing.
+            core.info(body.slice(0, 2000));
+            core.setFailed(
+              'Trusted publishing is not configured (or not available) for this ' +
+              'publisher yet. Use `npm run release` locally meanwhile.');
