@@ -12,6 +12,13 @@ import { BreakpointMapper } from './breakpointMapper';
 import { addResult, clearResults } from './resultStore';
 
 const THREAD_ID = 1;
+
+/**
+ * Called when a session ends because something went wrong rather than because
+ * it finished. The adapter stays free of any vscode import - that is what keeps
+ * it testable - so surfacing this to the user is the extension's job.
+ */
+export type FatalHandler = (message: string) => void;
 const MAX_ROW_SUMMARY_LENGTH = 80;
 const RETURN_VARIABLE = '@__dbg_return';
 
@@ -46,6 +53,10 @@ export class TsqlDebugSession extends LoggingDebugSession {
   private variableHandles = new Handles<VariableContainer>();
   /** Senast satta breakpoints per fil - skickas om vid restart. */
   private breakpointsBySource = new Map<string, DebugProtocol.SourceBreakpoint[]>();
+
+  constructor(private readonly onFatal?: FatalHandler) {
+    super();
+  }
 
   protected initializeRequest(response: DebugProtocol.InitializeResponse): void {
     response.body = {
@@ -98,6 +109,9 @@ export class TsqlDebugSession extends LoggingDebugSession {
     this.sidecar.on('terminated', () => this.sendEvent(new TerminatedEvent()));
     this.sidecar.on('error', (msg: string) => {
       this.sendEvent(new OutputEvent(`[sidecar] ${msg}\n`, 'stderr'));
+      // A session that ends this way just disappears otherwise: the Debug
+      // Console line is the only trace, and it is easy to miss.
+      this.onFatal?.(msg);
       this.sendEvent(new TerminatedEvent());
     });
 

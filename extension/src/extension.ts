@@ -24,7 +24,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory('tsql', {
       createDebugAdapterDescriptor: () =>
-        new vscode.DebugAdapterInlineImplementation(new TsqlDebugSession())
+        new vscode.DebugAdapterInlineImplementation(new TsqlDebugSession(
+          // The session is over by the time this fires, so a notification is
+          // the only place the reason is still visible.
+          // The message comes from the sidecar in English, so there is
+          // nothing here to localise.
+          message => vscode.window.showErrorMessage(`sqldbgr: ${message}`)))
     })
   );
 
