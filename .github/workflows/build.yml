@@ -159,7 +159,13 @@ jobs:
   # not have it at all. Move to `latest` once 3.9.3 ships.
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Off until the Marketplace ships the exchange endpoint: today
+    # POST /_apis/gallery/token answers 404 "The controller for path
+    # '/_apis/gallery/token' was not found", so a tag would fail here every
+    # time while the VSIX and the GitHub release succeeded. Run the "Check
+    # trusted publishing" workflow to see whether that is still true, then set
+    # the repository variable TRUSTED_PUBLISHING to true to turn this on.
+    if: startsWith(github.ref, 'refs/tags/v') && vars.TRUSTED_PUBLISHING == 'true' 
     runs-on: ubuntu-latest
     permissions:
       contents: read

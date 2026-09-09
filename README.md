@@ -144,26 +144,31 @@ app-registrering, ingen federerad credential och ingen Azure DevOps-användare.
 
 #### Publicera från CI
 
-CI publicerar på `v*`-taggar med **trusted publishing**: GitHubs OIDC-token
-byts direkt mot en Marketplace-credential. Ingen PAT, ingen app-registrering,
-ingen federerad credential, ingen Azure DevOps-användare - inget långlivat
-lagras i repot alls.
+Inte tillgängligt än, och det är mätt snarare än gissat. `vsce publish --oidc`
+(*trusted publishing*) byter GitHubs OIDC-token direkt mot en
+Marketplace-credential - ingen PAT, ingen app-registrering, ingen Azure
+DevOps. Klientsidan finns och fungerar, men servern gör det inte:
 
-Det som behövs är en *trusted publishing policy* för det här repot och
-workflowet på publisher-sidan
-(<https://marketplace.visualstudio.com/manage>). Behöver du veta exakt vad
-GitHub skickar, kör workflowet **Show the OIDC subject** (Actions → Run
-workflow) - det skriver ut `repository`, `workflow_ref` och `job_workflow_ref`,
-alltså precis det en policy pinnar. Bara de claimsen skrivs ut, aldrig token,
-som är en credential i sig.
+```
+POST https://marketplace.visualstudio.com/_apis/gallery/token
+HTTP 404 - The controller for path '/_apis/gallery/token' was not found
+```
 
-`--oidc` är implementerad men **oannonserad**: den är medvetet dold från
-`vsce publish --help` ([PR #1297](https://github.com/microsoft/vscode-vsce/pull/1297)),
-och finns inte i `latest` (3.9.2) - bara i prereleaserna. Workflowet pinnar
-därför `@vscode/vsce@3.9.3-12`; byt till `latest` när 3.9.3 släpps. Att den är
-oannonserad betyder också att Marketplace-sidan kan sakna gränssnittet för att
-registrera en policy ännu. Går det inte fungerar `npm run release` ovan
-oförändrat under tiden.
+Kör workflowet **Check trusted publishing** (Actions → Run workflow) för att se
+om det ändrats. Det gör exakt samma utbyte som `vsce` gör och rapporterar bara
+statuskoden - ingenting publiceras och inget versionsnummer förbrukas, vilket
+spelar roll eftersom Marketplace aldrig tar emot samma version två gånger.
+
+Publiceringsjobbet i `build.yml` är redan skrivet och avstängt bakom
+repo-variabeln `TRUSTED_PUBLISHING`. När utbytet svarar 200: sätt den till
+`true` (Settings → Secrets and variables → Actions → Variables) så publicerar
+taggar automatiskt. Tills dess bygger en tagg VSIX:en och skapar
+GitHub-releasen som vanligt, utan ett rött kryss för något som ändå inte kan
+lyckas.
+
+`--oidc` är för övrigt medvetet dold från `vsce publish --help`
+([PR #1297](https://github.com/microsoft/vscode-vsce/pull/1297)) och saknas
+helt i `latest` (3.9.2) - workflowet pinnar därför `@vscode/vsce@3.9.3-12`.
 
 Service principal-vägen (Entra-app + federerad credential) är övergiven med
 flit: den kräver att appen läggs till som användare i Azure DevOps-
