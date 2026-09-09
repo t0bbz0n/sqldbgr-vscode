@@ -19,15 +19,17 @@ public sealed class SidecarProcess : IAsyncDisposable
 {
     private readonly Process _process;
     private readonly HttpClient _client;
+    private readonly List<string> _output;
 
     public string Url { get; }
     public string Token { get; }
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    private SidecarProcess(Process process, string url, string token)
+    private SidecarProcess(Process process, string url, string token, List<string> output)
     {
         _process = process;
+        _output = output;
         Url = url;
         Token = token;
         _client = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromMinutes(2) };
@@ -47,6 +49,9 @@ public sealed class SidecarProcess : IAsyncDisposable
         foreach (var arg in new[] { "run", "--project", "sidecar", "--", "--port", "0" })
             start.ArgumentList.Add(arg);
         start.Environment["SQLDBGR_TOKEN"] = token;
+        // Annars blir ett ohanterat undantag en 500 med tom body, och testet
+        // säger bara att något gick fel.
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
 
         var process = Process.Start(start) ?? throw new InvalidOperationException("kunde inte starta sidecaren");
 
@@ -74,7 +79,7 @@ public sealed class SidecarProcess : IAsyncDisposable
                     "sidecaren skrev aldrig SQLDBGR_SIDECAR_URL:\n" + string.Join("\n", output));
         }
 
-        return new SidecarProcess(process, await url.Task, token);
+        return new SidecarProcess(process, await url.Task, token, output);
     }
 
     public async Task<T> PostAsync<T>(string path, object body)
@@ -135,12 +140,16 @@ public sealed class SidecarProcess : IAsyncDisposable
         }
     }
 
-    private static async Task ThrowIfFailedAsync(HttpResponseMessage response, string what)
+    private async Task ThrowIfFailedAsync(HttpResponseMessage response, string what)
     {
         if (response.IsSuccessStatusCode) return;
+        var body = await response.Content.ReadAsStringAsync();
+        // Sidecarens egen logg är där orsaken faktiskt står; utan den säger en
+        // 500 med tom body ingenting alls.
+        string tail;
+        lock (_output) tail = string.Join("\n", _output.TakeLast(40));
         throw new InvalidOperationException(
-            $"{what} -> {(int)response.StatusCode} {response.ReasonPhrase}: " +
-            await response.Content.ReadAsStringAsync());
+            $"{what} -> {(int)response.StatusCode} {response.ReasonPhrase}: {body}\n\n--- sidecar-logg ---\n{tail}");
     }
 
     private static string RepositoryRoot()
