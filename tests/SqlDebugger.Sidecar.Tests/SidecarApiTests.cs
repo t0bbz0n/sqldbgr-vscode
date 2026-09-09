@@ -33,6 +33,20 @@ public class SidecarApiTests(SqlServerFixture fixture)
         SELECT @x AS X;
         """;
 
+    /// <summary>Väntar på ett event, men låter pumpens undantag vinna. Faller
+    /// pumpen tyst blir symptomet annars bara "timed out", vilket inte säger
+    /// något om varför.</summary>
+    private static async Task WaitAsync(Task awaited, Task pump, string what, SidecarProcess sidecar)
+    {
+        var timeout = Task.Delay(TimeSpan.FromSeconds(60));
+        var finished = await Task.WhenAny(awaited, pump, timeout);
+        if (finished == pump && pump.IsFaulted) await pump;      // kastar den riktiga orsaken
+        if (finished == timeout)
+            throw new Xunit.Sdk.XunitException(
+                $"väntade på {what} i 60s utan resultat.\n\n--- sidecar-logg ---\n{sidecar.RecentOutput()}");
+        await awaited;
+    }
+
     private static async Task<string> WriteScriptAsync(string sql)
     {
         var path = Path.Combine(Path.GetTempPath(), $"sqldbgr-api-{Guid.NewGuid():N}.sql");
@@ -104,7 +118,7 @@ public class SidecarApiTests(SqlServerFixture fixture)
 
         await sidecar.PostAsync($"/session/{session}/run", new { stopOnEntry = false });
 
-        await pausedOnce.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await WaitAsync(pausedOnce.Task, pump, "en paus", sidecar);
 
         // Paus före satsen: @x är fortfarande 1 på rad 2.
         var locals = (await sidecar.GetAsync<Local[]>($"/session/{session}/locals"))
@@ -120,7 +134,7 @@ public class SidecarApiTests(SqlServerFixture fixture)
         await sidecar.PostAsync($"/session/{session}/variables", new { name = "@x", value = "41" });
         await sidecar.PostAsync($"/session/{session}/signal", new { command = "continue" });
 
-        await terminated.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        await WaitAsync(terminated.Task, pump, "terminated", sidecar);
         await pump.WaitAsync(TimeSpan.FromSeconds(10));
 
         lock (events)

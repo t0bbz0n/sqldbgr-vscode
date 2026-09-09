@@ -102,6 +102,12 @@ public sealed class SidecarProcess : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<T>(Json))!;
     }
 
+    /// <summary>Sidecarens senaste utskrifter, för felmeddelanden.</summary>
+    public string RecentOutput()
+    {
+        lock (_output) return string.Join("\n", _output.TakeLast(40));
+    }
+
     /// <summary>Utan bearer-token, så auth-middlewaren går att testa.</summary>
     public async Task<HttpStatusCode> GetUnauthenticatedAsync(string path)
     {
