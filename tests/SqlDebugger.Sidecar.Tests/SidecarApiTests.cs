@@ -10,7 +10,8 @@ namespace SqlDebugger.Sidecar.Tests;
 /// anropar DebugSessionRunner direkt, så ingenting av det här - routing,
 /// JSON-former, SSE-formatet, auth - täcks av dem.
 /// </summary>
-public class SidecarApiTests(SqlServerFixture fixture) : IClassFixture<SqlServerFixture>
+[Collection(SqlServerCollection.Name)]
+public class SidecarApiTests(SqlServerFixture fixture)
 {
     private string Cs => fixture.ConnectionString ?? throw new InvalidOperationException();
     private void RequireSqlServer() => Skip.If(fixture.ConnectionString is null, "SQLDBGR_TEST_CONNECTION är inte satt");

@@ -4,6 +4,16 @@ using Xunit;
 
 namespace SqlDebugger.Sidecar.Tests;
 
+/// <summary>Delas av alla klasser som rör servern. Med varsin IClassFixture
+/// kör klasserna parallellt mot SAMMA databas och krockar på objekt testerna
+/// själva skapar ("There is already an object named ..."), utöver att de
+/// applicerar schemat samtidigt.</summary>
+[CollectionDefinition(Name)]
+public sealed class SqlServerCollection : ICollectionFixture<SqlServerFixture>
+{
+    public const string Name = "sqlserver";
+}
+
 /// <summary>Skapar testdatabasen. ConnectionString är null när
 /// SQLDBGR_TEST_CONNECTION saknas - integrationstesterna hoppas då över.</summary>
 public sealed class SqlServerFixture : IAsyncLifetime

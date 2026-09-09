@@ -6,7 +6,8 @@ namespace SqlDebugger.Sidecar.Tests;
 
 /// <summary>Kör mot en riktig SQL Server (SQLDBGR_TEST_CONNECTION). Verifierar
 /// pausmekaniken, abort, exception-stopp, output och modulläge end-to-end.</summary>
-public class RunnerIntegrationTests(SqlServerFixture fixture) : IClassFixture<SqlServerFixture>
+[Collection(SqlServerCollection.Name)]
+public class RunnerIntegrationTests(SqlServerFixture fixture)
 {
     private string Cs => fixture.ConnectionString ?? throw new InvalidOperationException();
 
