@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your sqldbgr Pro licence key</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🐞</text></svg>">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfd;
+    --panel: #ffffff;
+    --ink: #16181d;
+    --muted: #5b6270;
+    --line: #e3e6ec;
+    --accent: #0d6efd;
+    --accent-ink: #ffffff;
+    --code-bg: #f4f5f8;
+    --good: #1a7f4b;
+    --warn: #9a5b12;
+    --shadow: 0 1px 2px rgba(16, 20, 30, .06), 0 8px 24px rgba(16, 20, 30, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116;
+      --panel: #161b22;
+      --ink: #e7ebf0;
+      --muted: #9aa4b2;
+      --line: #262d38;
+      --accent: #4d94ff;
+      --accent-ink: #08111f;
+      --code-bg: #10151c;
+      --good: #4fc98a;
+      --warn: #d8a163;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 20px;
+    display: flex;
+    justify-content: center;
+  }
+  main { width: 100%; max-width: 620px; padding-block: 64px 80px; display: flex; flex-direction: column; gap: 26px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0; letter-spacing: -.015em; text-wrap: balance; }
+  p { margin: 0; }
+  a { color: var(--accent); }
+  code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .status { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 15px; }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; opacity: .7; } }
+
+  .key {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: clamp(17px, 4.2vw, 22px);
+    letter-spacing: .06em;
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px 18px;
+    overflow-x: auto; white-space: nowrap;
+    user-select: all;
+  }
+  button {
+    font: inherit; font-weight: 550; font-size: 15px;
+    padding: 10px 18px; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); border: 1px solid transparent;
+  }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .said { color: var(--good); font-size: 14.5px; }
+
+  ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; color: var(--muted); }
+  ol strong { color: var(--ink); font-weight: 600; }
+  .trouble { border-left: 3px solid var(--warn); padding: 4px 0 4px 16px; color: var(--muted); font-size: 15px; display: flex; flex-direction: column; gap: 8px; }
+  footer { color: var(--muted); font-size: 14.5px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>Thanks. Here is your licence key.</h1>
+
+  <div class="card">
+    <!-- The resting state: the webhook that creates the key can land a moment
+         after the redirect, so waiting is the honest thing to show first. -->
+    <div id="waiting" class="status">
+      <span class="dot"></span>
+      <span id="waiting-text">Fetching your key…</span>
+    </div>
+
+    <div id="ready" hidden style="display:contents">
+      <p class="key" id="key-value">—</p>
+      <div class="row">
+        <button id="copy" type="button">Copy key</button>
+        <span class="said" id="copied" hidden>Copied</span>
+      </div>
+    </div>
+
+    <div id="failed" hidden style="display:contents">
+      <p id="failed-text"></p>
+    </div>
+  </div>
+
+  <ol>
+    <li><strong>Install sqldbgr Pro</strong> in VS Code. It brings the free
+      extension with it if you do not have it already.</li>
+    <li>Run <strong>sqldbgr Pro: Enter license key</strong> from the command
+      palette and paste the key above.</li>
+    <li>Open a <code>.sql</code> file and run
+      <strong>sqldbgr: Attach to a running procedure…</strong></li>
+  </ol>
+
+  <div class="trouble">
+    <p><strong>Nothing appearing?</strong> The key is created by Stripe's
+      confirmation, which sometimes arrives a few seconds after this page. It
+      keeps trying for a minute.</p>
+    <p>Your key is also on the receipt Stripe emails you, and it is always
+      available from the billing portal. If this page still shows nothing,
+      reply to that receipt and we will sort it out.</p>
+  </div>
+
+  <footer>
+    <a href="./">sqldbgr</a> · Keep this key. One key covers every seat you
+    bought, and a seat frees itself up 30 days after a machine goes quiet.
+  </footer>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  // Point this at the licence service. Everything else on this page works from
+  // that one value.
+  //
+  // Served from GitHub Pages this is a different origin, so the Function App
+  // has to allow this one under CORS. If the page ever moves onto the same host
+  // as the API - Azure Static Web Apps, say - change this to '/api' and the
+  // CORS question disappears with it.
+  var LICENSE_API = 'https://sqldbgr-licenses.azurewebsites.net/api';
+
+  var waiting = document.getElementById('waiting');
+  var waitingText = document.getElementById('waiting-text');
+  var ready = document.getElementById('ready');
+  var failed = document.getElementById('failed');
+  var failedText = document.getElementById('failed-text');
+  var keyValue = document.getElementById('key-value');
+
+  function show(el) {
+    waiting.hidden = el !== waiting;
+    ready.hidden = el !== ready;
+    failed.hidden = el !== failed;
+  }
+
+  function fail(message) {
+    failedText.textContent = message;
+    show(failed);
+  }
+
+  var sessionId = new URLSearchParams(location.search).get('session_id');
+  if (!sessionId) {
+    fail('This page needs the checkout it belongs to. Open it from the link Stripe sent you after paying, or use the key on your receipt.');
+    return;
+  }
+
+  // The webhook that creates the key races the browser redirect, and usually
+  // loses by a second or two. Poll rather than declare failure.
+  var deadline = Date.now() + 60000;
+
+  function attempt() {
+    fetch(LICENSE_API + '/license/claim?session_id=' + encodeURIComponent(sessionId), {
+      headers: { accept: 'application/json' }
+    }).then(function (response) {
+      if (response.ok) return response.json();
+      if (response.status === 404 && Date.now() < deadline) return null;   // not ready yet
+      if (response.status === 404) {
+        throw new Error('Your payment went through, but the key is not ready yet. It is on the receipt Stripe emailed you.');
+      }
+      throw new Error('The licence service answered ' + response.status + '. Your key is on the receipt Stripe emailed you.');
+    }).then(function (data) {
+      if (data === null) {
+        waitingText.textContent = 'Waiting for the payment to confirm…';
+        setTimeout(attempt, 2000);
+        return;
+      }
+      keyValue.textContent = data.licenseKey;
+      show(ready);
+    }).catch(function (err) {
+      fail(err && err.message
+        ? err.message
+        : 'Could not reach the licence service. Your key is on the receipt Stripe emailed you.');
+    });
+  }
+
+  attempt();
+
+  document.getElementById('copy').addEventListener('click', function () {
+    var copied = document.getElementById('copied');
+    navigator.clipboard.writeText(keyValue.textContent).then(function () {
+      copied.hidden = false;
+      setTimeout(function () { copied.hidden = true; }, 2200);
+    }).catch(function () {
+      // Clipboard blocked: selecting it is the fallback that always works.
+      var range = document.createRange();
+      range.selectNodeContents(keyValue);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+  });
+})();
+</script>
+</body>
+</html>

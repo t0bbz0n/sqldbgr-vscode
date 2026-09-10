@@ -247,6 +247,12 @@ have not bought anything.
 
 Turn it on once under Settings → Pages → Source → **GitHub Actions**.
 
+`claim.html` is the page Stripe redirects to after a purchase. It reads the
+checkout session from the URL, asks the licence service for the key and shows
+it. Point `LICENSE_API` in it at the Function App, and allow this origin under
+that app's CORS settings - or move the page onto the same host as the API and
+set it to `/api` instead.
+
 ## Contributing
 
 Bug reports and pull requests are welcome. See
