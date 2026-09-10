@@ -127,6 +127,15 @@
   td.no { color: var(--muted); }
   .table-scroll { overflow-x: auto; }
 
+  .buy {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 24px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 14px; margin-top: 22px;
+  }
+  .buy h3 { margin: 0; font-size: 18px; }
+  .buy p { margin: 0; color: var(--muted); font-size: 15px; max-width: 58ch; }
+  .buy stripe-buy-button { display: block; }
+
   ul.plain { margin: 0; padding-left: 20px; color: var(--muted); }
   ul.plain li { margin-bottom: 8px; }
   ul.plain strong { color: var(--ink); font-weight: 600; }
@@ -299,6 +308,23 @@
       appears in the same debugger; leave it out and everything else works
       unchanged.
     </p>
+
+    <div class="buy">
+      <h3>Get Pro</h3>
+      <p>
+        Priced per seat. A seat is one machine, and it frees itself up again
+        30 days after that machine goes quiet, so a laptop you replace does not
+        cost you anything.
+      </p>
+      <stripe-buy-button
+        buy-button-id="buy_btn_1UEEacLG8fDvK5tThRrk4Smv"
+        publishable-key="pk_live_51UBShgLG8fDvK5tToclDBVyNvtY7Nf5INg9RjaH68uc00FMF2190ri2vX6W209aBcFYD9FhmmdVsDK4jI4qNCpRd00Lxh9hFAv">
+      </stripe-buy-button>
+      <p>
+        You get a licence key straight after paying, and paste it into VS Code
+        with <strong>sqldbgr Pro: Enter license key</strong>.
+      </p>
+    </div>
   </div>
 </section>
 
@@ -343,6 +369,10 @@
     </div>
   </div>
 </footer>
+
+<!-- Renders the purchase button above. The publishable key in the element is
+     meant to be public; it can only start a checkout, never read anything. -->
+<script async src="https://js.stripe.com/v3/buy-button.js"></script>
 
 </body>
 </html>
