@@ -166,9 +166,8 @@ jobs:
     # Off until the Marketplace ships the exchange endpoint: today
     # POST /_apis/gallery/token answers 404 "The controller for path
     # '/_apis/gallery/token' was not found", so a tag would fail here every
-    # time while the VSIX and the GitHub release succeeded. Run the "Check
-    # trusted publishing" workflow to see whether that is still true, then set
-    # the repository variable TRUSTED_PUBLISHING to true to turn this on.
+    # time while the VSIX and the GitHub release succeeded. Set the repository
+    # variable TRUSTED_PUBLISHING to true once that exchange answers 200.
     if: startsWith(github.ref, 'refs/tags/v') && vars.TRUSTED_PUBLISHING == 'true' 
     runs-on: ubuntu-latest
     permissions:

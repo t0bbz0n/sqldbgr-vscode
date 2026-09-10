@@ -165,11 +165,10 @@ POST https://marketplace.visualstudio.com/_apis/gallery/token
 HTTP 404 - The controller for path '/_apis/gallery/token' was not found
 ```
 
-Run the **Check trusted publishing** workflow (Actions → Run workflow) to see
-whether that has changed. It performs exactly the exchange `vsce` performs and
-reports only the status code. Nothing is published and no version number is
-spent, which matters because the Marketplace never accepts the same version
-twice.
+To check whether that has changed, try the exchange yourself against the URL
+above with a workflow-issued OIDC token; nothing is published and no version
+number is spent, which matters because the Marketplace never accepts the same
+version twice. Never print the token itself, only the status code.
 
 The publish job in `build.yml` is already written, and switched off behind the
 repository variable `TRUSTED_PUBLISHING`. Once the exchange answers 200, set it
