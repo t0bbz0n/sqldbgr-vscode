@@ -131,14 +131,17 @@
     <p><strong>Nothing appearing?</strong> The key is created by Stripe's
       confirmation, which sometimes arrives a few seconds after this page. It
       keeps trying for a minute.</p>
-    <p>Your key is also on the receipt Stripe emails you, and it is always
-      available from the billing portal. If this page still shows nothing,
-      reply to that receipt and we will sort it out.</p>
+    <p><strong>This page is how you get your key, so keep the link.</strong>
+      Bookmark it or leave the tab open until the key is in VS Code. Opening the
+      same link again works and shows the same key.</p>
+    <p id="support" hidden>Still nothing? <a id="support-link" href="#">Get in
+      touch</a> and we will look it up from your payment.</p>
   </div>
 
   <footer>
-    <a href="./">sqldbgr</a> · Keep this key. One key covers every seat you
-    bought, and a seat frees itself up 30 days after a machine goes quiet.
+    <a href="./">sqldbgr</a> · Keep this key somewhere safe. One key covers
+    every seat you bought, and a seat frees itself up 30 days after a machine
+    goes quiet.
   </footer>
 
 </main>
@@ -155,6 +158,11 @@
   // as the API - Azure Static Web Apps, say - change this to '/api' and the
   // CORS question disappears with it.
   var LICENSE_API = 'https://sqldbgr-licenses.azurewebsites.net/api';
+
+  // Where a customer turns when this page cannot help them. Left empty the
+  // offer is hidden rather than pointing at an address that bounces. There is
+  // no email delivery of keys, so this is the only human fallback there is.
+  var SUPPORT_EMAIL = '';
 
   var waiting = document.getElementById('waiting');
   var waitingText = document.getElementById('waiting-text');
@@ -176,7 +184,7 @@
 
   var sessionId = new URLSearchParams(location.search).get('session_id');
   if (!sessionId) {
-    fail('This page needs the checkout it belongs to. Open it from the link Stripe sent you after paying, or use the key on your receipt.');
+    fail('This page needs the checkout it belongs to. Open it from the link you were sent to after paying.');
     return;
   }
 
@@ -191,9 +199,9 @@
       if (response.ok) return response.json();
       if (response.status === 404 && Date.now() < deadline) return null;   // not ready yet
       if (response.status === 404) {
-        throw new Error('Your payment went through, but the key is not ready yet. It is on the receipt Stripe emailed you.');
+        throw new Error('Your payment went through, but the key has not been issued yet. Reopen this link in a few minutes.');
       }
-      throw new Error('The licence service answered ' + response.status + '. Your key is on the receipt Stripe emailed you.');
+      throw new Error('The licence service answered ' + response.status + '. Your payment is safe; reopen this link shortly.');
     }).then(function (data) {
       if (data === null) {
         waitingText.textContent = 'Waiting for the payment to confirm…';
@@ -205,8 +213,16 @@
     }).catch(function (err) {
       fail(err && err.message
         ? err.message
-        : 'Could not reach the licence service. Your key is on the receipt Stripe emailed you.');
+        : 'Could not reach the licence service. Your payment is safe; reopen this link shortly.');
     });
+  }
+
+  if (SUPPORT_EMAIL) {
+    var link = document.getElementById('support-link');
+    link.href = 'mailto:' + SUPPORT_EMAIL + '?subject=' +
+      encodeURIComponent('sqldbgr Pro licence key') + '&body=' +
+      encodeURIComponent('Checkout session: ' + (sessionId || 'unknown'));
+    document.getElementById('support').hidden = false;
   }
 
   attempt();
